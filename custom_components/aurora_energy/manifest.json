@@ -1,0 +1,14 @@
+{
+  "domain": "aurora_energy",
+  "name": "Aurora Energy Tasmania (Aurora+)",
+  "version": "1.0.0",
+  "config_flow": true,
+  "iot_class": "cloud_polling",
+  "dependencies": ["recorder"],
+  "after_dependencies": ["energy"],
+  "requirements": [],
+  "documentation": "https://github.com/youruser/aurora_energy_ha",
+  "issue_tracker": "https://github.com/youruser/aurora_energy_ha/issues",
+  "codeowners": [],
+  "loggers": ["custom_components.aurora_energy"]
+}

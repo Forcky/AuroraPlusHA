@@ -1,0 +1,35 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Aurora Energy (Aurora+) Setup",
+        "description": "To authenticate, visit https://shtrom.github.io/AuroraPlus in your browser, log in with your Aurora Energy account, and copy the **id_token** shown on the page. Then paste it into the field below.\n\nNote: the token is only valid for a short time — complete this step promptly after copying it.",
+        "data": {
+          "id_token": "ID Token"
+        },
+        "data_description": {
+          "id_token": "The id_token JWT string obtained from the Aurora+ login tool"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate Aurora Energy",
+        "description": "Your Aurora+ session has expired. Visit https://shtrom.github.io/AuroraPlus in your browser, log in again, and paste the new **id_token** below.",
+        "data": {
+          "id_token": "ID Token"
+        },
+        "data_description": {
+          "id_token": "The id_token JWT string obtained from the Aurora+ login tool"
+        }
+      }
+    },
+    "error": {
+      "invalid_token": "The token is invalid or has expired. Please obtain a fresh token and try again.",
+      "cannot_connect": "Unable to connect to the Aurora+ API. Check your network connection and try again.",
+      "unknown": "An unexpected error occurred. Check the Home Assistant logs for details."
+    },
+    "abort": {
+      "already_configured": "Aurora Energy is already configured.",
+      "reauth_successful": "Re-authentication was successful. Your Aurora+ data will resume updating."
+    }
+  }
+}
