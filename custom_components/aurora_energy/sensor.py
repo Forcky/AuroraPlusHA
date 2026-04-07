@@ -79,7 +79,7 @@ SENSOR_DESCRIPTIONS: tuple[AuroraSensorEntityDescription, ...] = (
         data_key="average_daily_usage",
         native_unit_of_measurement="AUD",
         device_class=SensorDeviceClass.MONETARY,
-        state_class=SensorStateClass.MEASUREMENT,
+        state_class=None,
         icon="mdi:currency-usd",
         suggested_display_precision=2,
     ),
@@ -118,7 +118,7 @@ SENSOR_DESCRIPTIONS: tuple[AuroraSensorEntityDescription, ...] = (
         data_key="total_dollars",
         native_unit_of_measurement="AUD",
         device_class=SensorDeviceClass.MONETARY,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
         icon="mdi:currency-usd",
         suggested_display_precision=2,
     ),
@@ -132,6 +132,7 @@ SENSOR_DESCRIPTIONS: tuple[AuroraSensorEntityDescription, ...] = (
         state_class=SensorStateClass.TOTAL_INCREASING,
         icon="mdi:radiator",
         suggested_display_precision=3,
+        entity_registry_enabled_default=False,
     ),
     AuroraSensorEntityDescription(
         key=SENSOR_T41_DOLLARS,
@@ -139,9 +140,10 @@ SENSOR_DESCRIPTIONS: tuple[AuroraSensorEntityDescription, ...] = (
         data_key="t41_dollars",
         native_unit_of_measurement="AUD",
         device_class=SensorDeviceClass.MONETARY,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
         icon="mdi:radiator",
         suggested_display_precision=2,
+        entity_registry_enabled_default=False,
     ),
     # --- T31 General Power tariff ---
     AuroraSensorEntityDescription(
@@ -153,6 +155,7 @@ SENSOR_DESCRIPTIONS: tuple[AuroraSensorEntityDescription, ...] = (
         state_class=SensorStateClass.TOTAL_INCREASING,
         icon="mdi:power-plug",
         suggested_display_precision=3,
+        entity_registry_enabled_default=False,
     ),
     AuroraSensorEntityDescription(
         key=SENSOR_T31_DOLLARS,
@@ -160,9 +163,10 @@ SENSOR_DESCRIPTIONS: tuple[AuroraSensorEntityDescription, ...] = (
         data_key="t31_dollars",
         native_unit_of_measurement="AUD",
         device_class=SensorDeviceClass.MONETARY,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
         icon="mdi:power-plug",
         suggested_display_precision=2,
+        entity_registry_enabled_default=False,
     ),
     # --- Solar feed-in ---
     AuroraSensorEntityDescription(
@@ -181,7 +185,7 @@ SENSOR_DESCRIPTIONS: tuple[AuroraSensorEntityDescription, ...] = (
         data_key="solar_feedin_dollars",
         native_unit_of_measurement="AUD",
         device_class=SensorDeviceClass.MONETARY,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
         icon="mdi:solar-panel-large",
         suggested_display_precision=2,
     ),
@@ -235,5 +239,4 @@ class AuroraSensor(CoordinatorEntity[AuroraCoordinator], SensorEntity):
         return (
             self.coordinator.last_update_success
             and self.coordinator.data is not None
-            and not self.coordinator.data.get("no_data_flag", False)
         )

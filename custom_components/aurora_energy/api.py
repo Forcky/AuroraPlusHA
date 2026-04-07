@@ -72,8 +72,12 @@ class AuroraApiClient:
         """Exchange an id_token for an access_token via /identity/LoginToken."""
         url = BASE_URL + ENDPOINT_LOGIN
         try:
-            async with self._session.post(url, json={"token": id_token}) as resp:
+            async with self._session.post(url, json={"token": id_token}, headers={"Accept": "application/json", "User-Agent": "python/auroraplus"}) as resp:
                 if resp.status in (401, 403):
+                    _LOGGER.warning(
+                        "Aurora login rejected (HTTP %s) — id_token likely expired",
+                        resp.status,
+                    )
                     raise AuthenticationError(
                         f"id_token rejected by Aurora API (HTTP {resp.status})"
                     )
@@ -81,9 +85,27 @@ class AuroraApiClient:
                 data = await resp.json(content_type=None)
 
             self._id_token = id_token
-            self._access_token = data.get("access_token") or data.get("AccessToken")
-            self._refresh_token = data.get("refresh_token") or data.get("RefreshToken")
+            raw_token = (
+                data.get("accessToken")
+                or data.get("access_token")
+                or data.get("AccessToken")
+            )
+            self._access_token = (
+                raw_token.removeprefix("bearer ").removeprefix("Bearer ")
+                if raw_token
+                else None
+            )
+            self._refresh_token = (
+                data.get("refreshToken")
+                or data.get("refresh_token")
+                or data.get("RefreshToken")
+            )
             self._refresh_cookie = self._extract_refresh_cookie(resp.cookies)
+
+            if not self._access_token:
+                raise AuthenticationError(
+                    "Login succeeded but no access_token found in response"
+                )
 
             _LOGGER.debug("Aurora login successful, access_token obtained")
             await self._persist_tokens()
@@ -110,6 +132,7 @@ class AuroraApiClient:
                     url,
                     json={"token": self._refresh_token},
                     cookies=cookies,
+                    headers={"Accept": "application/json", "User-Agent": "python/auroraplus"},
                 ) as resp:
                     if resp.status in (401, 403):
                         raise TokenRefreshError(
@@ -118,11 +141,22 @@ class AuroraApiClient:
                     resp.raise_for_status()
                     data = await resp.json(content_type=None)
 
-                self._access_token = data.get("access_token") or data.get("AccessToken")
-                if "refresh_token" in data:
-                    self._refresh_token = data["refresh_token"]
-                elif "RefreshToken" in data:
-                    self._refresh_token = data["RefreshToken"]
+                raw_token = (
+                    data.get("accessToken")
+                    or data.get("access_token")
+                    or data.get("AccessToken")
+                )
+                self._access_token = (
+                    raw_token.removeprefix("bearer ").removeprefix("Bearer ")
+                    if raw_token
+                    else None
+                )
+                self._refresh_token = (
+                    data.get("refreshToken")
+                    or data.get("refresh_token")
+                    or data.get("RefreshToken")
+                    or self._refresh_token
+                )
                 new_cookie = self._extract_refresh_cookie(resp.cookies)
                 if new_cookie:
                     self._refresh_cookie = new_cookie
@@ -143,9 +177,20 @@ class AuroraApiClient:
         Used by the config flow to verify credentials before creating the entry.
         """
         await self.async_login(id_token)
-        data = await self.async_get_customer_data()
-        service_agreement_id = data.get("ServiceAgreementID", "")
+        raw = await self.async_get_customer_data()
+        data = raw[0] if isinstance(raw, list) else raw
         customer_id = data.get("CustomerID", "")
+        # ServiceAgreementID is nested inside Premises
+        premises = data.get("Premises") or []
+        active_premise = next(
+            (p for p in premises if p.get("IsActive")),
+            premises[0] if premises else {},
+        )
+        service_agreement_id = (
+            active_premise.get("ServiceAgreementID")
+            or active_premise.get("serviceAgreementId")
+            or ""
+        )
         if not service_agreement_id or not customer_id:
             raise AuthenticationError(
                 "Could not retrieve ServiceAgreementID or CustomerID from API"
@@ -164,22 +209,25 @@ class AuroraApiClient:
         return await self._get_with_retry(url)
 
     async def async_get_usage(
-        self, timespan: str = "day", index: int = -1
+        self, timespan: str = "day", index: int = -1, nmi: Optional[str] = None
     ) -> dict[str, Any]:
         """GET /usage/{timespan} — metered usage records.
 
         Args:
             timespan: "day", "week", "month", "quarter", or "year"
             index: -1 = most recent, -9 = oldest available
+            nmi: National Metering Identifier (unlocks per-interval data)
         """
         if not self._access_token:
             await self.async_login(self._id_token)
         url = BASE_URL + ENDPOINT_USAGE.format(timespan=timespan)
-        params = {
+        params: dict[str, str] = {
             "serviceAgreementID": self._service_agreement_id,
             "customerId": self._customer_id,
             "index": str(index),
         }
+        if nmi:
+            params["nmi"] = nmi
         return await self._get_with_retry(url, params)
 
     # ------------------------------------------------------------------
@@ -193,13 +241,25 @@ class AuroraApiClient:
         for attempt in range(2):
             async with self._session.get(
                 url,
-                headers={"Authorization": f"Bearer {self._access_token}"},
+                headers={
+                    "Authorization": f"Bearer {self._access_token}",
+                    "Accept": "application/json",
+                    "User-Agent": "python/auroraplus",
+                },
                 params=params,
             ) as resp:
-                if resp.status == 401 and attempt == 0:
-                    _LOGGER.debug("Got 401 from %s, refreshing token", url)
-                    await self.async_refresh_token()
-                    continue
+                if resp.status == 401:
+                    if attempt == 0:
+                        _LOGGER.warning(
+                            "Aurora 401 from %s (token prefix: %s...)",
+                            url,
+                            (self._access_token or "")[:20],
+                        )
+                        await self.async_refresh_token()
+                        continue
+                    raise AuthenticationError(
+                        f"Access token rejected by {url} after refresh (401)"
+                    )
                 resp.raise_for_status()
                 return await resp.json(content_type=None)
 

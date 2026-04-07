@@ -23,7 +23,8 @@ POLL_INTERVAL = timedelta(hours=1)
 # Tariff names as returned by the API
 TARIFF_T41 = "T41"
 TARIFF_T31 = "T31"
-TARIFF_OTHER = "Other"   # Solar feed-in / export (negative = export to grid)
+TARIFF_T140 = "T140"     # Solar feed-in / export (negative dollars = earnings)
+TARIFF_OTHER = "Other"   # Supply charge (non-metered, not solar)
 TARIFF_TOTAL = "Total"
 
 # Sensor data keys (used to look up values from coordinator.data)

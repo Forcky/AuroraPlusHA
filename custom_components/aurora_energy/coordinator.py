@@ -34,6 +34,7 @@ from .const import (
     TARIFF_OTHER,
     TARIFF_T31,
     TARIFF_T41,
+    TARIFF_T140,
     TARIFF_TOTAL,
 )
 
@@ -116,6 +117,7 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         self._injected_dates: set[str] = set()
         self._store_loaded = False
+        self._nmi: Optional[str] = None
 
     # ------------------------------------------------------------------
     # Core update method
@@ -131,7 +133,16 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         try:
             customer_data = await self.client.async_get_customer_data()
-            usage_data = await self.client.async_get_usage(timespan="day", index=-1)
+            # Extract active premise for correct service agreement ID and NMI
+            _customer = customer_data[0] if isinstance(customer_data, list) else customer_data
+            _premises = _customer.get("Premises") or []
+            _active = next((p for p in _premises if p.get("IsActive")), _premises[0] if _premises else {})
+            _sa_id = _active.get("ServiceAgreementID") or self.client._service_agreement_id
+            _meters = _active.get("Meters") or []
+            _nmi = _meters[0].get("NMI") if _meters else None
+            # Update client with correct service agreement ID (fixes stale config entries)
+            self.client._service_agreement_id = _sa_id
+            usage_data = await self.client.async_get_usage(timespan="day", index=-1, nmi=_nmi)
         except TokenRefreshError as err:
             raise ConfigEntryAuthFailed(
                 "Aurora+ authentication tokens expired — please re-authenticate"
@@ -140,12 +151,13 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             raise UpdateFailed(f"Error communicating with Aurora+ API: {err}") from err
 
         parsed = self._parse(customer_data, usage_data)
+        self._nmi = parsed.get("nmi")
 
         # Inject statistics: backfill all available days on first run
         if not self._injected_dates:
             await self._backfill_history()
 
-        # Inject today's records if not already done
+        # Inject the fetched day's records if not already done
         date_key = parsed.get("start_date")
         if date_key and date_key not in self._injected_dates:
             records = parsed.get("metered_records", [])
@@ -159,18 +171,28 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     # ------------------------------------------------------------------
 
     def _parse(
-        self, customer: dict[str, Any], usage: dict[str, Any]
+        self, customer: Any, usage: dict[str, Any]
     ) -> dict[str, Any]:
         """Normalise raw API responses into a flat dict for sensors."""
+        if isinstance(customer, list):
+            customer = customer[0] if customer else {}
+        premises = customer.get("Premises") or []
+        # Use the active premise; fall back to first if none found
+        premise = next(
+            (p for p in premises if p.get("IsActive")),
+            premises[0] if premises else {},
+        )
+        meters = premise.get("Meters") or []
         data: dict[str, Any] = {}
+        data["nmi"] = meters[0].get("NMI") if meters else None
 
-        # Billing fields
-        data["estimated_balance"] = customer.get("EstimatedBalance")
-        data["amount_owed"] = customer.get("AmountOwed")
-        data["unbilled_amount"] = customer.get("UnbilledAmount")
-        data["average_daily_usage"] = customer.get("AverageDailyUsage")
-        data["usage_days_remaining"] = customer.get("UsageDaysRemaining")
-        data["bill_total_amount"] = customer.get("BillTotalAmount")
+        # Billing fields — nested inside first Premise
+        data["estimated_balance"] = premise.get("EstimatedBalance")
+        data["amount_owed"] = premise.get("AmountOwed")
+        data["unbilled_amount"] = premise.get("UnbilledAmount")
+        data["average_daily_usage"] = premise.get("AverageDailyUsage")
+        data["usage_days_remaining"] = premise.get("UsageDaysRemaining")
+        data["bill_total_amount"] = premise.get("BillTotalAmount")
 
         # Usage summary totals
         summary = usage.get("SummaryTotals", {})
@@ -184,13 +206,11 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         data["t31_kwh"] = kwh_summary.get(TARIFF_T31)
         data["t31_dollars"] = dollar_summary.get(TARIFF_T31)
 
-        # Solar feed-in (Other tariff) — negative means export; take abs value
-        other_kwh = kwh_summary.get(TARIFF_OTHER)
-        other_dollars = dollar_summary.get(TARIFF_OTHER)
-        data["solar_feedin_kwh"] = abs(other_kwh) if other_kwh is not None else None
-        data["solar_feedin_dollars"] = (
-            abs(other_dollars) if other_dollars is not None else None
-        )
+        # Solar feed-in — T140 tariff (negative dollars = earnings from export)
+        t140_kwh = kwh_summary.get(TARIFF_T140)
+        t140_dollars = dollar_summary.get(TARIFF_T140)
+        data["solar_feedin_kwh"] = t140_kwh
+        data["solar_feedin_dollars"] = abs(t140_dollars) if t140_dollars is not None else None
 
         # Raw records + metadata for statistics injection
         data["metered_records"] = usage.get("MeteredUsageRecords", [])
@@ -208,7 +228,7 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         _LOGGER.info("Aurora+: starting historical data backfill (%d days)", BACKFILL_DAYS)
         for idx in range(-1, -(BACKFILL_DAYS + 1), -1):
             try:
-                usage = await self.client.async_get_usage(timespan="day", index=idx)
+                usage = await self.client.async_get_usage(timespan="day", index=idx, nmi=getattr(self, "_nmi", None))
                 date_key = usage.get("StartDate")
                 records = usage.get("MeteredUsageRecords", [])
                 no_data = usage.get("NoDataFlag", False)
@@ -253,15 +273,22 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             t41_kwh = float(kwh_by_tariff.get(TARIFF_T41) or 0.0)
             t31_kwh = float(kwh_by_tariff.get(TARIFF_T31) or 0.0)
-            other_kwh = abs(float(kwh_by_tariff.get(TARIFF_OTHER) or 0.0))
-            other_dollars = abs(float(dollar_by_tariff.get(TARIFF_OTHER) or 0.0))
-            # Total consumption excludes solar feed-in
-            total_kwh = t41_kwh + t31_kwh
+            solar_kwh = abs(float(kwh_by_tariff.get(TARIFF_T140) or 0.0))
+            solar_dollars = abs(float(dollar_by_tariff.get(TARIFF_T140) or 0.0))
+            # Total consumption = all kWh except solar (T140)
+            total_kwh = float(
+                sum(
+                    float(v or 0.0)
+                    for k, v in kwh_by_tariff.items()
+                    if k not in (TARIFF_T140, TARIFF_TOTAL)
+                )
+            )
+            # Total cost = all dollar charges except solar credit and supply charge
             total_dollars = float(
                 sum(
                     float(v or 0.0)
                     for k, v in dollar_by_tariff.items()
-                    if k != TARIFF_OTHER
+                    if k not in (TARIFF_T140, TARIFF_OTHER, TARIFF_TOTAL)
                 )
             )
 
@@ -269,9 +296,9 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 (STAT_ID_TOTAL_KWH, total_kwh),
                 (STAT_ID_T41_KWH, t41_kwh),
                 (STAT_ID_T31_KWH, t31_kwh),
-                (STAT_ID_SOLAR_KWH, other_kwh),
+                (STAT_ID_SOLAR_KWH, solar_kwh),
                 (STAT_ID_TOTAL_DOLLARS, total_dollars),
-                (STAT_ID_SOLAR_DOLLARS, other_dollars),
+                (STAT_ID_SOLAR_DOLLARS, solar_dollars),
             ]:
                 sums[stat_id] += period_val
                 stats[stat_id].append(
