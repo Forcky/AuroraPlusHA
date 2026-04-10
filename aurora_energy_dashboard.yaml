@@ -1,0 +1,79 @@
+title: Aurora Energy
+views:
+  - title: Overview
+    path: aurora
+    icon: mdi:lightning-bolt
+    cards:
+
+      # ── Account Balance ──────────────────────────────────────────────
+      - type: horizontal-stack
+        cards:
+          - type: tile
+            entity: sensor.aurora_energy_estimated_balance
+            name: Estimated Balance
+          - type: tile
+            entity: sensor.aurora_energy_amount_owed
+            name: Amount Owed
+          - type: tile
+            entity: sensor.aurora_energy_unbilled_amount
+            name: Unbilled Amount
+
+      # ── Billing Summary ──────────────────────────────────────────────
+      - type: entities
+        title: Billing Summary
+        icon: mdi:file-document-outline
+        entities:
+          - entity: sensor.aurora_energy_bill_total_amount
+            name: Current Bill Total
+          - entity: sensor.aurora_energy_average_daily_usage
+            name: Avg Daily Spend
+          - entity: sensor.aurora_energy_usage_days_remaining
+            name: Days Remaining in Period
+
+      # ── Yesterday's Usage ────────────────────────────────────────────
+      - type: horizontal-stack
+        cards:
+          - type: tile
+            entity: sensor.aurora_energy_daily_total_usage
+            name: Yesterday's Usage
+          - type: tile
+            entity: sensor.aurora_energy_daily_total_cost
+            name: Yesterday's Cost
+
+      # ── Solar ────────────────────────────────────────────────────────
+      - type: horizontal-stack
+        cards:
+          - type: tile
+            entity: sensor.aurora_energy_solar_feed_in
+            name: Solar Feed-in
+          - type: tile
+            entity: sensor.aurora_energy_solar_feed_in_earnings
+            name: Feed-in Earnings
+
+      # ── Usage History (9 days) ───────────────────────────────────────
+      - type: statistics-graph
+        title: Energy Usage — Last 9 Days
+        days_to_show: 9
+        period: day
+        chart_type: bar
+        stat_types:
+          - change
+        entities:
+          - entity: aurora_energy:total_kwh
+            name: Consumption (kWh)
+          - entity: aurora_energy:solar_feedin_kwh
+            name: Solar Feed-in (kWh)
+
+      # ── Cost History (9 days) ────────────────────────────────────────
+      - type: statistics-graph
+        title: Energy Cost — Last 9 Days
+        days_to_show: 9
+        period: day
+        chart_type: bar
+        stat_types:
+          - change
+        entities:
+          - entity: aurora_energy:total_dollars
+            name: Energy Cost (AUD)
+          - entity: aurora_energy:solar_feedin_dollars
+            name: Feed-in Earnings (AUD)
