@@ -30,9 +30,12 @@ views:
           - entity: sensor.aurora_energy_usage_days_remaining
             name: Days Remaining in Period
 
-      # ── Yesterday's Usage ────────────────────────────────────────────
+      # ── Current Tariff + Yesterday's Usage ──────────────────────────
       - type: horizontal-stack
         cards:
+          - type: tile
+            entity: sensor.aurora_energy_t93_tariff_period
+            name: Tariff Period
           - type: tile
             entity: sensor.aurora_energy_daily_total_usage
             name: Yesterday's Usage
@@ -50,6 +53,24 @@ views:
             entity: sensor.aurora_energy_solar_feed_in_earnings
             name: Feed-in Earnings
 
+      # ── Power Hours ──────────────────────────────────────────────────
+      - type: entities
+        title: Power Hours
+        icon: mdi:clock-star-four-points
+        entities:
+          - entity: sensor.aurora_energy_power_hour_status
+            name: Status
+          - entity: sensor.aurora_energy_power_hour_event
+            name: Event
+          - entity: sensor.aurora_energy_power_hour_start
+            name: Starts
+          - entity: sensor.aurora_energy_power_hour_end
+            name: Ends
+          - entity: sensor.aurora_energy_power_hour_selection_deadline
+            name: Select by
+          - entity: sensor.aurora_energy_power_hour_total_savings
+            name: Total Savings
+
       # ── Usage History (9 days) ───────────────────────────────────────
       - type: statistics-graph
         title: Energy Usage — Last 9 Days
@@ -63,6 +84,20 @@ views:
             name: Consumption (kWh)
           - entity: aurora_energy:solar_feedin_kwh
             name: Solar Feed-in (kWh)
+
+      # ── Peak vs Off-Peak History (9 days) ───────────────────────────
+      - type: statistics-graph
+        title: Peak vs Off-Peak Usage — Last 9 Days
+        days_to_show: 9
+        period: day
+        chart_type: bar
+        stat_types:
+          - change
+        entities:
+          - entity: aurora_energy:t93peak_kwh
+            name: Peak (kWh)
+          - entity: aurora_energy:t93offpeak_kwh
+            name: Off-Peak (kWh)
 
       # ── Cost History (9 days) ────────────────────────────────────────
       - type: statistics-graph

@@ -311,6 +311,84 @@ GET /api/usage/day?serviceAgreementID=118004920&customerId=100139032&index=-1&nm
 
 ---
 
+### `GET /api/powerhour/upcoming-active`
+
+Returns current and upcoming Power Hour events for the authenticated account.
+
+**No query parameters required** — account is determined from the bearer token.
+
+**Response:** A JSON array of Power Hour event objects. Empty array if no upcoming events.
+
+**Example response:**
+```json
+[
+  {
+    "EventName": "April Flash Event",
+    "PowerHourEventId": 92,
+    "StartDateTime": "2026-04-09T08:55:47",
+    "OfferExpiryDateTime": "2026-04-26T15:55:00",
+    "TimeslotAccepted": {
+      "PowerHourTimeSlotId": 750,
+      "StartDateTime": "2026-04-24T16:00:00",
+      "EndDateTime": "2026-04-24T19:00:00",
+      "ExpiryDateTime": "2026-04-24T15:55:00"
+    },
+    "TimeslotAll": [
+      {
+        "PowerHourTimeSlotId": 741,
+        "StartDateTime": "2026-04-23T10:00:00",
+        "EndDateTime": "2026-04-23T13:00:00",
+        "ExpiryDateTime": "2026-04-23T09:55:00"
+      }
+    ],
+    "Customer": {
+      "AccountId": "118004920",
+      "Nmi": "8000000000",
+      "Usage": null,
+      "Cost": null,
+      "CalculatedDateTime": null,
+      "ExportedDateTime": null,
+      "AcceptedDateTime": null,
+      "SPID": null,
+      "Tariff": null,
+      "DataQuality": null,
+      "IsFlagged": false
+    }
+  }
+]
+```
+
+**Field reference:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `EventName` | string | Human-readable event name |
+| `PowerHourEventId` | int | Unique event identifier |
+| `StartDateTime` | local datetime | When the event was announced (naive, Australia/Hobart) |
+| `OfferExpiryDateTime` | local datetime | Deadline to select a timeslot (naive, Australia/Hobart) |
+| `TimeslotAccepted` | object or null | The timeslot the customer has selected; `null` if no selection made yet |
+| `TimeslotAll` | array | All available timeslots to choose from |
+| `Customer.Usage` | float or null | kWh used during the event — populated after the event completes |
+| `Customer.Cost` | float or null | Savings earned during the event — populated after the event completes |
+
+**Key notes:**
+- All `StartDateTime`, `EndDateTime`, and `OfferExpiryDateTime` values are **naive local time** (Australia/Hobart) with **no timezone suffix** — must be interpreted as `Australia/Hobart` when converting to UTC
+- `TimeslotAccepted` is `null` when the customer has not yet selected a timeslot
+- `OfferExpiryDateTime` is typically 5 minutes before the last available timeslot starts
+- `TimeslotAll` offers multiple days and time windows to choose from; each slot has its own `ExpiryDateTime` (5 min before that slot starts)
+
+---
+
+### `GET /api/powerhour/all`
+
+Returns all Power Hour events including completed historical events. Structure is identical to `/upcoming-active`.
+
+**No query parameters required.**
+
+Used to calculate total lifetime Power Hour savings by summing `abs(Customer.Cost)` across all events where `Customer.Cost` is not null.
+
+---
+
 ## Usage response — detailed field reference
 
 ### Top-level fields
@@ -400,7 +478,9 @@ Querying with `index=-1` returns the most recent available period. `index=-9` is
 | Response is a list | `GET /customers/current` returns a JSON **array**, not an object. Take `[0]`. |
 | Multiple premises | The `Premises` array may include old closed accounts. Always filter for `IsActive: true`. |
 | Wrong `serviceAgreementID` = null data | Using the ID from a closed premise returns 25 records with all null usage values and no error. |
-| `NoDataFlag: true` with records | `NoDataFlag` is often `true` even when 25 records are returned. The flag appears to indicate the SummaryTotals are not computed, not that records are absent. |
+| `NoDataFlag: true` with records | `NoDataFlag` is often `true` even when 25 records are returned and hourly kWh data is present. Do not use this flag to skip processing — check for non-zero values in `KilowattHourUsage` directly instead. |
+| Power Hours datetimes are naive local | All datetime fields in `/powerhour/*` responses have no timezone suffix and represent `Australia/Hobart` local time. Must be localised before converting to UTC. |
+| Power Hours `Cost` sign | `Customer.Cost` after a completed event may be negative (credit) or positive (savings amount) depending on API version — use `abs()` to get the savings value. |
 | `accessToken` includes prefix | The `accessToken` value in login/refresh responses is `"bearer <token>"` — strip the prefix before using as a Bearer token. |
 | `Accept` header required | Omitting `Accept: application/json` causes usage records to return null usage values. |
 | `User-Agent` header | The API expects `User-Agent: python/auroraplus` — other values may work but this is the tested value. |
