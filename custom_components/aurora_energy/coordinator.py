@@ -11,7 +11,10 @@ from typing import Any, Optional
 
 from homeassistant.components.recorder import get_instance
 from homeassistant.components.recorder.models import StatisticData, StatisticMetaData
-from homeassistant.components.recorder.statistics import async_add_external_statistics
+from homeassistant.components.recorder.statistics import (
+    async_add_external_statistics,
+    get_last_statistics,
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfEnergy
 from homeassistant.core import HomeAssistant
@@ -226,7 +229,7 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _backfill_history(self) -> None:
         """Fetch and inject statistics for the last BACKFILL_DAYS days."""
         _LOGGER.info("Aurora+: starting historical data backfill (%d days)", BACKFILL_DAYS)
-        for idx in range(-1, -(BACKFILL_DAYS + 1), -1):
+        for idx in range(-BACKFILL_DAYS, 0):
             try:
                 usage = await self.client.async_get_usage(timespan="day", index=idx, nmi=getattr(self, "_nmi", None))
                 date_key = usage.get("StartDate")
@@ -248,15 +251,24 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         StatisticData.sum must be a monotonically increasing cumulative total.
         StatisticData.state holds the per-period (hourly) value.
         """
-        # Accumulate running sums across the day
-        sums: dict[str, float] = {
-            STAT_ID_TOTAL_KWH: 0.0,
-            STAT_ID_T41_KWH: 0.0,
-            STAT_ID_T31_KWH: 0.0,
-            STAT_ID_SOLAR_KWH: 0.0,
-            STAT_ID_TOTAL_DOLLARS: 0.0,
-            STAT_ID_SOLAR_DOLLARS: 0.0,
-        }
+        # Retrieve the last cumulative sum for each statistic from the recorder
+        # so that new data continues the running total instead of resetting to 0.
+        sums: dict[str, float] = {}
+        for stat_id in (
+            STAT_ID_TOTAL_KWH,
+            STAT_ID_T41_KWH,
+            STAT_ID_T31_KWH,
+            STAT_ID_SOLAR_KWH,
+            STAT_ID_TOTAL_DOLLARS,
+            STAT_ID_SOLAR_DOLLARS,
+        ):
+            last = await get_instance(self.hass).async_add_executor_job(
+                get_last_statistics, self.hass, 1, stat_id, True, set()
+            )
+            if last and stat_id in last:
+                sums[stat_id] = last[stat_id][0].get("sum", 0.0) or 0.0
+            else:
+                sums[stat_id] = 0.0
         stats: dict[str, list[StatisticData]] = {k: [] for k in sums}
 
         for record in sorted(records, key=lambda r: r.get("StartTime", "")):
