@@ -18,6 +18,8 @@ from .const import (
     CONF_REFRESH_TOKEN,
     ENDPOINT_CUSTOMERS,
     ENDPOINT_LOGIN,
+    ENDPOINT_POWERHOUR_ALL,
+    ENDPOINT_POWERHOUR_UPCOMING,
     ENDPOINT_REFRESH,
     ENDPOINT_USAGE,
 )
@@ -229,6 +231,26 @@ class AuroraApiClient:
         if nmi:
             params["nmi"] = nmi
         return await self._get_with_retry(url, params)
+
+    async def async_get_powerhour_upcoming(self) -> list[dict[str, Any]]:
+        """GET /powerhour/upcoming-active — current and upcoming Power Hour events."""
+        if not self._access_token:
+            await self.async_login(self._id_token)
+        url = BASE_URL + ENDPOINT_POWERHOUR_UPCOMING
+        result = await self._get_with_retry(url)
+        if isinstance(result, list):
+            return result
+        return result.get("value") or result.get("items") or []
+
+    async def async_get_powerhour_all(self) -> list[dict[str, Any]]:
+        """GET /powerhour/all — all Power Hour events including historical (for savings)."""
+        if not self._access_token:
+            await self.async_login(self._id_token)
+        url = BASE_URL + ENDPOINT_POWERHOUR_ALL
+        result = await self._get_with_retry(url)
+        if isinstance(result, list):
+            return result
+        return result.get("value") or result.get("items") or []
 
     # ------------------------------------------------------------------
     # Private helpers

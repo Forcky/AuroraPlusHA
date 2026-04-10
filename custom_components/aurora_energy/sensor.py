@@ -1,6 +1,7 @@
 """Sensor platform for Aurora Energy integration."""
 from __future__ import annotations
 
+import zoneinfo
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -15,7 +16,9 @@ from homeassistant.const import UnitOfEnergy
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.event import async_track_time_change
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from .const import (
     DOMAIN,
@@ -24,15 +27,26 @@ from .const import (
     SENSOR_BILL_TOTAL,
     SENSOR_DAYS_REMAINING,
     SENSOR_ESTIMATED_BALANCE,
+    SENSOR_PH_END,
+    SENSOR_PH_EVENT_NAME,
+    SENSOR_PH_SELECTION_DEADLINE,
+    SENSOR_PH_START,
+    SENSOR_PH_STATUS,
+    SENSOR_PH_TOTAL_SAVINGS,
     SENSOR_SOLAR_DOLLARS,
     SENSOR_SOLAR_KWH,
     SENSOR_T31_DOLLARS,
     SENSOR_T31_KWH,
     SENSOR_T41_DOLLARS,
     SENSOR_T41_KWH,
+    SENSOR_T93OFFPEAK_DOLLARS,
+    SENSOR_T93OFFPEAK_KWH,
+    SENSOR_T93PEAK_DOLLARS,
+    SENSOR_T93PEAK_KWH,
     SENSOR_TOTAL_DOLLARS,
     SENSOR_TOTAL_KWH,
     SENSOR_UNBILLED_AMOUNT,
+    TZ_HOBART,
 )
 from .coordinator import AuroraCoordinator
 
@@ -168,6 +182,107 @@ SENSOR_DESCRIPTIONS: tuple[AuroraSensorEntityDescription, ...] = (
         suggested_display_precision=2,
         entity_registry_enabled_default=False,
     ),
+    # --- T93 Time-of-Use tariff (disabled by default — account-type-dependent) ---
+    AuroraSensorEntityDescription(
+        key=SENSOR_T93PEAK_KWH,
+        name="T93 Peak Usage",
+        data_key="t93peak_kwh",
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        device_class=SensorDeviceClass.ENERGY,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        icon="mdi:lightning-bolt",
+        suggested_display_precision=3,
+        entity_registry_enabled_default=False,
+    ),
+    AuroraSensorEntityDescription(
+        key=SENSOR_T93PEAK_DOLLARS,
+        name="T93 Peak Cost",
+        data_key="t93peak_dollars",
+        native_unit_of_measurement="AUD",
+        device_class=SensorDeviceClass.MONETARY,
+        state_class=SensorStateClass.TOTAL,
+        icon="mdi:lightning-bolt",
+        suggested_display_precision=2,
+        entity_registry_enabled_default=False,
+    ),
+    AuroraSensorEntityDescription(
+        key=SENSOR_T93OFFPEAK_KWH,
+        name="T93 Off-Peak Usage",
+        data_key="t93offpeak_kwh",
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        device_class=SensorDeviceClass.ENERGY,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        icon="mdi:lightning-bolt-outline",
+        suggested_display_precision=3,
+        entity_registry_enabled_default=False,
+    ),
+    AuroraSensorEntityDescription(
+        key=SENSOR_T93OFFPEAK_DOLLARS,
+        name="T93 Off-Peak Cost",
+        data_key="t93offpeak_dollars",
+        native_unit_of_measurement="AUD",
+        device_class=SensorDeviceClass.MONETARY,
+        state_class=SensorStateClass.TOTAL,
+        icon="mdi:lightning-bolt-outline",
+        suggested_display_precision=2,
+        entity_registry_enabled_default=False,
+    ),
+    # --- Power Hours demand-response program ---
+    AuroraSensorEntityDescription(
+        key=SENSOR_PH_STATUS,
+        name="Power Hour Status",
+        data_key="powerhour_status",
+        native_unit_of_measurement=None,
+        device_class=None,
+        state_class=None,
+        icon="mdi:clock-star-four-points",
+    ),
+    AuroraSensorEntityDescription(
+        key=SENSOR_PH_EVENT_NAME,
+        name="Power Hour Event",
+        data_key="powerhour_event_name",
+        native_unit_of_measurement=None,
+        device_class=None,
+        state_class=None,
+        icon="mdi:calendar-star",
+    ),
+    AuroraSensorEntityDescription(
+        key=SENSOR_PH_START,
+        name="Power Hour Start",
+        data_key="powerhour_start",
+        native_unit_of_measurement=None,
+        device_class=SensorDeviceClass.TIMESTAMP,
+        state_class=None,
+        icon="mdi:clock-start",
+    ),
+    AuroraSensorEntityDescription(
+        key=SENSOR_PH_END,
+        name="Power Hour End",
+        data_key="powerhour_end",
+        native_unit_of_measurement=None,
+        device_class=SensorDeviceClass.TIMESTAMP,
+        state_class=None,
+        icon="mdi:clock-end",
+    ),
+    AuroraSensorEntityDescription(
+        key=SENSOR_PH_SELECTION_DEADLINE,
+        name="Power Hour Selection Deadline",
+        data_key="powerhour_selection_deadline",
+        native_unit_of_measurement=None,
+        device_class=SensorDeviceClass.TIMESTAMP,
+        state_class=None,
+        icon="mdi:timer-sand",
+    ),
+    AuroraSensorEntityDescription(
+        key=SENSOR_PH_TOTAL_SAVINGS,
+        name="Power Hour Total Savings",
+        data_key="powerhour_total_savings",
+        native_unit_of_measurement="AUD",
+        device_class=SensorDeviceClass.MONETARY,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        icon="mdi:piggy-bank",
+        suggested_display_precision=2,
+    ),
     # --- Solar feed-in ---
     AuroraSensorEntityDescription(
         key=SENSOR_SOLAR_KWH,
@@ -199,10 +314,12 @@ async def async_setup_entry(
 ) -> None:
     """Set up Aurora Energy sensors from a config entry."""
     coordinator: AuroraCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-    async_add_entities(
+    entities: list[SensorEntity] = [
         AuroraSensor(coordinator, description, entry)
         for description in SENSOR_DESCRIPTIONS
-    )
+    ]
+    entities.append(TariffPeriodSensor(entry))
+    async_add_entities(entities)
 
 
 class AuroraSensor(CoordinatorEntity[AuroraCoordinator], SensorEntity):
@@ -240,3 +357,66 @@ class AuroraSensor(CoordinatorEntity[AuroraCoordinator], SensorEntity):
             self.coordinator.last_update_success
             and self.coordinator.data is not None
         )
+
+
+class TariffPeriodSensor(SensorEntity):
+    """Sensor showing the current T93 tariff period: 'peak' or 'off_peak'.
+
+    Value is computed from wall-clock time in Australia/Hobart timezone.
+    Updates are triggered by time-change listeners at exact transition
+    boundaries (07:00, 22:00, and 00:00 for weekday transitions) rather
+    than polling, so the state flips at the correct second.
+
+    Aurora T93 schedule:
+      Peak:     07:00–22:00, Monday–Friday (AEST/AEDT)
+      Off-peak: all other times (nights, weekends)
+      Note: public holidays are treated as weekdays by this implementation.
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "T93 Tariff Period"
+    _attr_icon = "mdi:clock-time-eight"
+    _attr_should_poll = False
+
+    def __init__(self, entry: ConfigEntry) -> None:
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_t93_tariff_period"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, entry.entry_id)},
+            name="Aurora Energy",
+            manufacturer="Aurora Energy Tasmania",
+            model="Aurora+",
+            entry_type=DeviceEntryType.SERVICE,
+        )
+        self._tz = zoneinfo.ZoneInfo(TZ_HOBART)
+        self._unsub_listeners: list = []
+
+    @property
+    def native_value(self) -> str:
+        now = dt_util.now().astimezone(self._tz)
+        if now.weekday() < 5 and 7 <= now.hour < 22:
+            return "peak"
+        return "off_peak"
+
+    async def async_added_to_hass(self) -> None:
+        """Register time-change listeners for exact tariff transition moments."""
+        for hr in (0, 7, 22):
+            self._unsub_listeners.append(
+                async_track_time_change(
+                    self.hass,
+                    self._handle_time_change,
+                    hour=hr,
+                    minute=0,
+                    second=0,
+                )
+            )
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Cancel time-change listeners on removal."""
+        for unsub in self._unsub_listeners:
+            unsub()
+        self._unsub_listeners.clear()
+
+    async def _handle_time_change(self, now: Any) -> None:
+        """Recompute and push state at tariff transition times."""
+        self.async_write_ha_state()

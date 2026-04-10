@@ -6,7 +6,9 @@ statistics into the HA recorder for the Energy Dashboard.
 """
 from __future__ import annotations
 
+import datetime
 import logging
+import zoneinfo
 from typing import Any, Optional
 
 from homeassistant.components.recorder import get_instance
@@ -28,20 +30,47 @@ from .const import (
     BACKFILL_DAYS,
     DOMAIN,
     POLL_INTERVAL,
+    SENSOR_PH_END,
+    SENSOR_PH_EVENT_NAME,
+    SENSOR_PH_SELECTION_DEADLINE,
+    SENSOR_PH_START,
+    SENSOR_PH_STATUS,
+    SENSOR_PH_TOTAL_SAVINGS,
     STAT_ID_SOLAR_DOLLARS,
     STAT_ID_SOLAR_KWH,
     STAT_ID_T31_KWH,
     STAT_ID_T41_KWH,
+    STAT_ID_T93OFFPEAK_KWH,
+    STAT_ID_T93PEAK_KWH,
     STAT_ID_TOTAL_DOLLARS,
     STAT_ID_TOTAL_KWH,
     TARIFF_OTHER,
     TARIFF_T31,
     TARIFF_T41,
     TARIFF_T140,
+    TARIFF_T93OFFPEAK,
+    TARIFF_T93PEAK,
     TARIFF_TOTAL,
+    TZ_HOBART,
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _parse_hobart_naive(
+    dt_str: Optional[str], tz: zoneinfo.ZoneInfo
+) -> Optional[datetime.datetime]:
+    """Parse a naive ISO datetime string as Australia/Hobart and return a UTC-aware datetime.
+
+    Aurora Power Hours datetimes have no timezone suffix (e.g. "2026-04-24T16:00:00").
+    """
+    if not dt_str:
+        return None
+    naive = dt_util.parse_datetime(dt_str)
+    if naive is None:
+        return None
+    return dt_util.as_utc(naive.replace(tzinfo=tz))
+
 
 # StatisticMetaData for each external statistic registered with the recorder.
 # source must equal DOMAIN for external statistics.
@@ -94,6 +123,22 @@ _STAT_METADATA: dict[str, StatisticMetaData] = {
         statistic_id=STAT_ID_SOLAR_DOLLARS,
         unit_of_measurement="AUD",
     ),
+    STAT_ID_T93PEAK_KWH: StatisticMetaData(
+        has_mean=False,
+        has_sum=True,
+        name="Aurora T93 Peak Energy",
+        source=DOMAIN,
+        statistic_id=STAT_ID_T93PEAK_KWH,
+        unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+    ),
+    STAT_ID_T93OFFPEAK_KWH: StatisticMetaData(
+        has_mean=False,
+        has_sum=True,
+        name="Aurora T93 Off-Peak Energy",
+        source=DOMAIN,
+        statistic_id=STAT_ID_T93OFFPEAK_KWH,
+        unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+    ),
 }
 
 
@@ -121,6 +166,8 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._injected_dates: set[str] = set()
         self._store_loaded = False
         self._nmi: Optional[str] = None
+        self._last_powerhour_all_date: Optional[datetime.date] = None
+        self._powerhour_savings_cache: Optional[float] = None
 
     # ------------------------------------------------------------------
     # Core update method
@@ -153,7 +200,20 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except Exception as err:
             raise UpdateFailed(f"Error communicating with Aurora+ API: {err}") from err
 
-        parsed = self._parse(customer_data, usage_data)
+        # Fetch Power Hours data — isolated try/except so failures don't break main update
+        powerhour_upcoming: list[dict] = []
+        try:
+            powerhour_upcoming = await self.client.async_get_powerhour_upcoming()
+            today = dt_util.now().date()
+            if self._last_powerhour_all_date != today:
+                ph_all = await self.client.async_get_powerhour_all()
+                self._last_powerhour_all_date = today
+                self._powerhour_savings_cache = self._calculate_total_savings(ph_all)
+        except Exception as err:
+            _LOGGER.warning("Aurora+: Power Hours fetch failed: %s", err)
+
+        parsed = self._parse(customer_data, usage_data, powerhour_upcoming)
+        parsed[SENSOR_PH_TOTAL_SAVINGS] = self._powerhour_savings_cache
         self._nmi = parsed.get("nmi")
 
         # Inject statistics: backfill all available days on first run
@@ -164,7 +224,7 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         date_key = parsed.get("start_date")
         if date_key and date_key not in self._injected_dates:
             records = parsed.get("metered_records", [])
-            if records and not parsed.get("no_data_flag"):
+            if self._has_real_kwh_data(records):
                 await self._inject_statistics(records, date_key)
 
         return parsed
@@ -174,7 +234,10 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     # ------------------------------------------------------------------
 
     def _parse(
-        self, customer: Any, usage: dict[str, Any]
+        self,
+        customer: Any,
+        usage: dict[str, Any],
+        powerhour_upcoming: Optional[list] = None,
     ) -> dict[str, Any]:
         """Normalise raw API responses into a flat dict for sensors."""
         if isinstance(customer, list):
@@ -209,6 +272,12 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         data["t31_kwh"] = kwh_summary.get(TARIFF_T31)
         data["t31_dollars"] = dollar_summary.get(TARIFF_T31)
 
+        # T93 Time-of-Use tariff (peak / off-peak) — None for non-T93 accounts
+        data["t93peak_kwh"]        = kwh_summary.get(TARIFF_T93PEAK)
+        data["t93peak_dollars"]    = dollar_summary.get(TARIFF_T93PEAK)
+        data["t93offpeak_kwh"]     = kwh_summary.get(TARIFF_T93OFFPEAK)
+        data["t93offpeak_dollars"] = dollar_summary.get(TARIFF_T93OFFPEAK)
+
         # Solar feed-in — T140 tariff (negative dollars = earnings from export)
         t140_kwh = kwh_summary.get(TARIFF_T140)
         t140_dollars = dollar_summary.get(TARIFF_T140)
@@ -220,11 +289,61 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         data["no_data_flag"] = usage.get("NoDataFlag", False)
         data["start_date"] = usage.get("StartDate")
 
+        # Power Hours
+        _tz = zoneinfo.ZoneInfo(TZ_HOBART)
+        if powerhour_upcoming:
+            event = powerhour_upcoming[0]
+            data[SENSOR_PH_EVENT_NAME] = event.get("EventName")
+            expiry_dt = _parse_hobart_naive(event.get("OfferExpiryDateTime"), _tz)
+            data[SENSOR_PH_SELECTION_DEADLINE] = expiry_dt
+            slot = event.get("TimeslotAccepted")
+            if slot:
+                start_dt = _parse_hobart_naive(slot.get("StartDateTime"), _tz)
+                end_dt   = _parse_hobart_naive(slot.get("EndDateTime"), _tz)
+                data[SENSOR_PH_START] = start_dt
+                data[SENSOR_PH_END]   = end_dt
+                now_utc = dt_util.utcnow()
+                if start_dt and end_dt and start_dt <= now_utc <= end_dt:
+                    data[SENSOR_PH_STATUS] = "active"
+                else:
+                    data[SENSOR_PH_STATUS] = "confirmed"
+            else:
+                data[SENSOR_PH_START] = None
+                data[SENSOR_PH_END]   = None
+                now_utc = dt_util.utcnow()
+                data[SENSOR_PH_STATUS] = (
+                    "selection_pending"
+                    if expiry_dt and now_utc < expiry_dt
+                    else "no_event"
+                )
+        else:
+            data[SENSOR_PH_STATUS]             = "no_event"
+            data[SENSOR_PH_EVENT_NAME]         = None
+            data[SENSOR_PH_START]              = None
+            data[SENSOR_PH_END]                = None
+            data[SENSOR_PH_SELECTION_DEADLINE] = None
+
         return data
 
     # ------------------------------------------------------------------
     # Statistics injection
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _has_real_kwh_data(records: list[dict[str, Any]]) -> bool:
+        """Return True if any hourly record contains non-zero kWh consumption.
+
+        NoDataFlag from the API is unreliable — records can contain valid data
+        even when the flag is True. This check uses the actual record values
+        so that days with real usage are never skipped.
+        """
+        for record in records:
+            if record.get("TimeMeasureUnit") != "Hour":
+                continue
+            kwh = record.get("KilowattHourUsage") or {}
+            if any(float(v or 0) > 0 for v in kwh.values()):
+                return True
+        return False
 
     async def _backfill_history(self) -> None:
         """Fetch and inject statistics for the last BACKFILL_DAYS days."""
@@ -234,10 +353,9 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 usage = await self.client.async_get_usage(timespan="day", index=idx, nmi=getattr(self, "_nmi", None))
                 date_key = usage.get("StartDate")
                 records = usage.get("MeteredUsageRecords", [])
-                no_data = usage.get("NoDataFlag", False)
-                if records and not no_data and date_key:
-                    if date_key not in self._injected_dates:
-                        await self._inject_statistics(records, date_key)
+                # NoDataFlag is unreliable — check for actual kWh data in hourly records instead
+                if date_key and date_key not in self._injected_dates and self._has_real_kwh_data(records):
+                    await self._inject_statistics(records, date_key)
             except Exception as err:
                 _LOGGER.warning(
                     "Aurora+: could not backfill index %d: %s", idx, err
@@ -258,6 +376,8 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             STAT_ID_TOTAL_KWH,
             STAT_ID_T41_KWH,
             STAT_ID_T31_KWH,
+            STAT_ID_T93PEAK_KWH,
+            STAT_ID_T93OFFPEAK_KWH,
             STAT_ID_SOLAR_KWH,
             STAT_ID_TOTAL_DOLLARS,
             STAT_ID_SOLAR_DOLLARS,
@@ -271,7 +391,9 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 sums[stat_id] = 0.0
         stats: dict[str, list[StatisticData]] = {k: [] for k in sums}
 
-        for record in sorted(records, key=lambda r: r.get("StartTime", "")):
+        # Process only hourly records — the Day-level record has null KilowattHourUsage
+        hourly = [r for r in records if r.get("TimeMeasureUnit") == "Hour"]
+        for record in sorted(hourly, key=lambda r: r.get("StartTime", "")):
             start_str = record.get("StartTime")
             if not start_str:
                 continue
@@ -283,9 +405,11 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             kwh_by_tariff: dict[str, Any] = record.get("KilowattHourUsage") or {}
             dollar_by_tariff: dict[str, Any] = record.get("DollarValueUsage") or {}
 
-            t41_kwh = float(kwh_by_tariff.get(TARIFF_T41) or 0.0)
-            t31_kwh = float(kwh_by_tariff.get(TARIFF_T31) or 0.0)
-            solar_kwh = abs(float(kwh_by_tariff.get(TARIFF_T140) or 0.0))
+            t41_kwh        = float(kwh_by_tariff.get(TARIFF_T41)      or 0.0)
+            t31_kwh        = float(kwh_by_tariff.get(TARIFF_T31)      or 0.0)
+            t93peak_kwh    = float(kwh_by_tariff.get(TARIFF_T93PEAK)    or 0.0)
+            t93offpeak_kwh = float(kwh_by_tariff.get(TARIFF_T93OFFPEAK) or 0.0)
+            solar_kwh      = abs(float(kwh_by_tariff.get(TARIFF_T140) or 0.0))
             solar_dollars = abs(float(dollar_by_tariff.get(TARIFF_T140) or 0.0))
             # Total consumption = all kWh except solar (T140)
             total_kwh = float(
@@ -305,12 +429,14 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
 
             for stat_id, period_val in [
-                (STAT_ID_TOTAL_KWH, total_kwh),
-                (STAT_ID_T41_KWH, t41_kwh),
-                (STAT_ID_T31_KWH, t31_kwh),
-                (STAT_ID_SOLAR_KWH, solar_kwh),
-                (STAT_ID_TOTAL_DOLLARS, total_dollars),
-                (STAT_ID_SOLAR_DOLLARS, solar_dollars),
+                (STAT_ID_TOTAL_KWH,      total_kwh),
+                (STAT_ID_T41_KWH,        t41_kwh),
+                (STAT_ID_T31_KWH,        t31_kwh),
+                (STAT_ID_T93PEAK_KWH,    t93peak_kwh),
+                (STAT_ID_T93OFFPEAK_KWH, t93offpeak_kwh),
+                (STAT_ID_SOLAR_KWH,      solar_kwh),
+                (STAT_ID_TOTAL_DOLLARS,  total_dollars),
+                (STAT_ID_SOLAR_DOLLARS,  solar_dollars),
             ]:
                 sums[stat_id] += period_val
                 stats[stat_id].append(
@@ -333,3 +459,17 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             {"injected_dates": list(self._injected_dates)}
         )
         _LOGGER.debug("Aurora+: injected statistics for %s", date_key)
+
+    def _calculate_total_savings(self, events: list[dict]) -> Optional[float]:
+        """Sum abs(Customer.Cost) for all completed Power Hour events.
+
+        Returns None if no completed events exist yet (avoids showing misleading 0.00).
+        """
+        total = 0.0
+        found_any = False
+        for event in events:
+            cost = (event.get("Customer") or {}).get("Cost")
+            if cost is not None:
+                total += abs(float(cost))
+                found_any = True
+        return round(total, 2) if found_any else None
