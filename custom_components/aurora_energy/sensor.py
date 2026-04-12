@@ -1,7 +1,7 @@
 """Sensor platform for Aurora Energy integration."""
 from __future__ import annotations
 
-import zoneinfo
+import datetime
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -16,7 +16,7 @@ from homeassistant.const import UnitOfEnergy
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.event import async_track_time_change
+from homeassistant.helpers.event import async_track_utc_time_change
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
@@ -46,7 +46,6 @@ from .const import (
     SENSOR_TOTAL_DOLLARS,
     SENSOR_TOTAL_KWH,
     SENSOR_UNBILLED_AMOUNT,
-    TZ_HOBART,
 )
 from .coordinator import AuroraCoordinator
 
@@ -367,16 +366,24 @@ class TariffPeriodSensor(SensorEntity):
     boundaries (07:00, 22:00, and 00:00 for weekday transitions) rather
     than polling, so the state flips at the correct second.
 
-    Aurora T93 schedule:
-      Peak:     07:00–22:00, Monday–Friday (AEST/AEDT)
-      Off-peak: all other times (nights, weekends)
-      Note: public holidays are treated as weekdays by this implementation.
+    Aurora T93 schedule (NEM clock, AEST UTC+10 — does NOT observe daylight saving):
+      Peak:     07:00–22:00 AEST, Monday–Friday
+      Off-peak: all other times
+
+    During AEDT (Tasmania daylight saving, UTC+11) peak appears as 08:00–23:00
+    local time, but the underlying NEM boundary is still 07:00–22:00 AEST.
+    This sensor always computes against fixed UTC+10, never local Hobart time.
+
+    Note: public holidays are treated as weekdays by this implementation.
     """
 
     _attr_has_entity_name = True
     _attr_name = "T93 Tariff Period"
     _attr_icon = "mdi:clock-time-eight"
     _attr_should_poll = False
+
+    # Fixed AEST offset — UTC+10 with no DST adjustment, matching the NEM clock
+    _AEST = datetime.timezone(datetime.timedelta(hours=10))
 
     def __init__(self, entry: ConfigEntry) -> None:
         self._entry = entry
@@ -388,21 +395,30 @@ class TariffPeriodSensor(SensorEntity):
             model="Aurora+",
             entry_type=DeviceEntryType.SERVICE,
         )
-        self._tz = zoneinfo.ZoneInfo(TZ_HOBART)
         self._unsub_listeners: list = []
 
     @property
     def native_value(self) -> str:
-        now = dt_util.now().astimezone(self._tz)
-        if now.weekday() < 5 and 7 <= now.hour < 22:
+        # Always compute against AEST (UTC+10). The NEM tariff clock does not
+        # observe daylight saving, so during AEDT the peak window shifts to
+        # 08:00–23:00 local time but remains 07:00–22:00 AEST.
+        now_aest = dt_util.utcnow().astimezone(self._AEST)
+        if now_aest.weekday() < 5 and 7 <= now_aest.hour < 22:
             return "peak"
         return "off_peak"
 
     async def async_added_to_hass(self) -> None:
-        """Register time-change listeners for exact tariff transition moments."""
-        for hr in (0, 7, 22):
+        """Register UTC time-change listeners for exact AEST tariff transitions.
+
+        Listeners fire at the fixed UTC times that correspond to the AEST
+        boundaries, so they remain correct regardless of DST:
+          21:00 UTC = 07:00 AEST (peak start on weekdays)
+          12:00 UTC = 22:00 AEST (peak end on weekdays)
+          14:00 UTC = 00:00 AEST (weekday/weekend boundary)
+        """
+        for hr in (12, 14, 21):
             self._unsub_listeners.append(
-                async_track_time_change(
+                async_track_utc_time_change(
                     self.hass,
                     self._handle_time_change,
                     hour=hr,

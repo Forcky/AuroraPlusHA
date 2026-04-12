@@ -37,6 +37,24 @@ The integration authenticates using a short-lived Azure B2C id_token from the Au
 
 ## Installation
 
+### Option 1 — HACS (Recommended)
+
+1. In Home Assistant, open **HACS**
+2. Click the three-dot menu (⋮) → **Custom repositories**
+3. Add `https://github.com/Forcky/AuroraPlusHA` with category **Integration**
+4. Click **Add**
+5. Search for **Aurora Energy Tasmania** in HACS and click **Download**
+6. Restart Home Assistant
+7. Go to **Settings → Devices & Services → Add Integration**
+8. Search for **Aurora Energy Tasmania**
+9. Paste your id_token into the field and click **Submit**
+
+HACS will notify you of future updates so you can update with a single click.
+
+---
+
+### Option 2 — Manual installation
+
 1. Copy the `aurora_energy` folder into your HA `config/custom_components/` directory:
    ```
    config/
@@ -73,17 +91,37 @@ If setup succeeds, a device called **Aurora Energy** will appear with all sensor
 | Daily Total Cost | Previous day's energy cost | AUD |
 | Solar Feed-in | Previous day's solar export | kWh |
 | Solar Feed-in Earnings | Previous day's solar feed-in credit | AUD |
+| T93 Tariff Period | Current tariff period: `peak` or `off_peak` | — |
+| Power Hour Status | Current Power Hours state (see below) | — |
+| Power Hour Event | Name of the active Power Hours event | — |
+| Power Hour Start | Start time of your accepted Power Hours slot | — |
+| Power Hour End | End time of your accepted Power Hours slot | — |
+| Power Hour Selection Deadline | Deadline to select a timeslot | — |
+| Power Hour Total Savings | Lifetime savings from Power Hours events | AUD |
+
+**Power Hour Status values:**
+
+| Value | Meaning |
+|-------|---------|
+| `no_event` | No upcoming Power Hours event |
+| `selection_pending` | Event available but you haven't selected a timeslot yet |
+| `confirmed` | Timeslot selected, event not yet started |
+| `active` | Power Hours event is currently running |
 
 ### Disabled by default
 
-The following sensors exist but are disabled by default. They are only relevant for accounts on T31/T41 flat-rate tariffs. Enable them via **Settings → Devices → Aurora Energy → entities** if needed.
+The following sensors exist but are disabled by default. Enable them via **Settings → Devices → Aurora Energy → entities** if needed.
 
-| Sensor | Description |
-|--------|-------------|
-| T31 General Usage | T31 tariff consumption (kWh) |
-| T31 General Cost | T31 tariff cost (AUD) |
-| T41 Heating Usage | T41 tariff consumption (kWh) |
-| T41 Heating Cost | T41 tariff cost (AUD) |
+| Sensor | Description | Relevant for |
+|--------|-------------|-------------|
+| T31 General Usage | T31 tariff consumption (kWh) | T31 flat-rate accounts |
+| T31 General Cost | T31 tariff cost (AUD) | T31 flat-rate accounts |
+| T41 Heating Usage | T41 tariff consumption (kWh) | T41 controlled load accounts |
+| T41 Heating Cost | T41 tariff cost (AUD) | T41 controlled load accounts |
+| T93 Peak Usage | T93 peak tariff consumption (kWh) | T93 time-of-use accounts |
+| T93 Peak Cost | T93 peak tariff cost (AUD) | T93 time-of-use accounts |
+| T93 Off-Peak Usage | T93 off-peak tariff consumption (kWh) | T93 time-of-use accounts |
+| T93 Off-Peak Cost | T93 off-peak tariff cost (AUD) | T93 time-of-use accounts |
 
 ---
 
@@ -100,6 +138,17 @@ To add to the Energy Dashboard:
 3. Under **Solar panels**, add:
    - **Energy production:** `aurora_energy:solar_feedin_kwh`
    - **Return to grid:** `aurora_energy:solar_feedin_kwh`
+
+The following additional statistics are available for use in custom dashboard cards:
+
+| Statistic ID | Description |
+|-------------|-------------|
+| `aurora_energy:total_kwh` | Total daily consumption |
+| `aurora_energy:solar_feedin_kwh` | Solar feed-in (exported) |
+| `aurora_energy:t93peak_kwh` | T93 peak consumption |
+| `aurora_energy:t93offpeak_kwh` | T93 off-peak consumption |
+| `aurora_energy:total_dollars` | Total energy cost |
+| `aurora_energy:solar_feedin_dollars` | Solar feed-in earnings |
 
 ---
 
@@ -132,7 +181,21 @@ This integration supports multiple Aurora tariff structures:
 | **T41** | Flat rate controlled load (heating) |
 | **T140** | Solar feed-in / export (detected automatically) |
 
-The integration automatically detects which tariffs are active on your account. T31/T41 sensors are disabled by default for T93 accounts.
+The integration automatically detects which tariffs are active on your account. T31/T41 and T93 breakdown sensors are disabled by default — enable only what's relevant to your account.
+
+### T93 peak/off-peak schedule
+
+Aurora's T93 tariff boundaries are set by the **NEM (National Electricity Market) clock, which runs on AEST (UTC+10) year-round** and does not observe daylight saving time.
+
+| Period | AEST time (year-round) | AEDT local time (Oct–Apr) | Days |
+|--------|------------------------|---------------------------|------|
+| Peak | 7:00 am – 10:00 pm | 8:00 am – 11:00 pm | Monday – Friday |
+| Off-peak | 10:00 pm – 7:00 am | 11:00 pm – 8:00 am | Monday – Friday |
+| Off-peak | All day | All day | Saturday & Sunday |
+
+The sensor always computes against fixed AEST (UTC+10) regardless of local Hobart time, and its state transitions fire at the correct UTC times (`21:00 UTC` = 7am AEST, `12:00 UTC` = 10pm AEST).
+
+> **Note:** Public holidays are currently treated as weekdays.
 
 ---
 
