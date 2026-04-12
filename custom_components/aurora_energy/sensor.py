@@ -361,10 +361,10 @@ class AuroraSensor(CoordinatorEntity[AuroraCoordinator], SensorEntity):
 class TariffPeriodSensor(SensorEntity):
     """Sensor showing the current T93 tariff period: 'peak' or 'off_peak'.
 
-    Value is computed from wall-clock time in Australia/Hobart timezone.
-    Updates are triggered by time-change listeners at exact transition
-    boundaries (07:00, 22:00, and 00:00 for weekday transitions) rather
-    than polling, so the state flips at the correct second.
+    Value is computed from the current UTC time converted to fixed AEST (UTC+10).
+    Updates are triggered by UTC time-change listeners at the fixed UTC hours
+    that correspond to AEST tariff boundaries, so the state flips at the correct
+    second regardless of whether Tasmania is in AEST or AEDT.
 
     Aurora T93 schedule (NEM clock, AEST UTC+10 — does NOT observe daylight saving):
       Peak:     07:00–22:00 AEST, Monday–Friday

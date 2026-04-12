@@ -7,6 +7,8 @@ A custom Home Assistant integration that pulls your Aurora Energy Tasmania billi
 - Estimated balance, amount owed, unbilled amount
 - Daily energy usage (kWh) and cost
 - Solar feed-in (kWh exported and earnings)
+- Real-time T93 tariff period sensor (`peak` / `off_peak`), DST-correct
+- Power Hours demand-response program sensors (status, timeslot, savings)
 - Historical statistics for the Energy Dashboard (backfills 9 days on first run)
 - Automatic hourly refresh
 
@@ -147,6 +149,8 @@ The following additional statistics are available for use in custom dashboard ca
 | `aurora_energy:solar_feedin_kwh` | Solar feed-in (exported) |
 | `aurora_energy:t93peak_kwh` | T93 peak consumption |
 | `aurora_energy:t93offpeak_kwh` | T93 off-peak consumption |
+| `aurora_energy:t31_kwh` | T31 general consumption |
+| `aurora_energy:t41_kwh` | T41 heating consumption |
 | `aurora_energy:total_dollars` | Total energy cost |
 | `aurora_energy:solar_feedin_dollars` | Solar feed-in earnings |
 
@@ -159,6 +163,8 @@ The following additional statistics are available for use in custom dashboard ca
 | Billing data | Every hour | Balance, amount owed, etc. update immediately |
 | Usage data | Every hour | Reflects the previous day; Aurora releases meter data around 8–9am AEST each morning |
 | Energy Dashboard stats | Once per day | Injected automatically when daily data becomes available |
+| Power Hours (upcoming) | Every hour | Active event, timeslot, and selection deadline |
+| Power Hours (total savings) | Once per day | Recalculated from full event history once daily |
 
 ---
 
@@ -207,6 +213,9 @@ The id_token expired before you submitted it. Grab a fresh token from the Aurora
 ### Sensors show "Unknown"
 - **Estimated Balance** and **Usage Days Remaining** may be `null` for some account types — this is normal behaviour and not an error.
 - **Usage sensors** only update once per day when Aurora releases meter data (typically 8–9am AEST). They will show `Unknown` or yesterday's value until then.
+
+### Power Hour sensors show "Unknown"
+Power Hour sensors show `Unknown` when no Power Hours event is currently active or upcoming — this is normal. The **Power Hour Status** sensor will show `no_event` once the coordinator has fetched successfully at least once. If it remains `Unknown` after the first hourly refresh, check **Settings → System → Logs** and filter by `aurora_energy` for warnings.
 
 ### Daily Total Usage shows 0.000 kWh
 - This is expected before ~8–9am AEST — Aurora has not yet released that day's data.
