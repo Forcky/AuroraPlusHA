@@ -365,14 +365,19 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 )
 
     async def _get_last_sums(self) -> dict[str, float]:
-        """Retrieve the last cumulative sum for each statistic from the recorder."""
+        """Retrieve the last cumulative sum for each statistic from the recorder.
+
+        The types argument must explicitly include "sum" — passing set() causes
+        HA to return rows with only start/end, which would silently default the
+        sum to 0 and reset cumulative totals on every call.
+        """
         sums: dict[str, float] = {}
         for stat_id in _STAT_METADATA:
             last = await get_instance(self.hass).async_add_executor_job(
-                get_last_statistics, self.hass, 1, stat_id, True, set()
+                get_last_statistics, self.hass, 1, stat_id, True, {"sum"}
             )
-            if last and stat_id in last:
-                sums[stat_id] = last[stat_id][0].get("sum", 0.0) or 0.0
+            if last and stat_id in last and last[stat_id]:
+                sums[stat_id] = float(last[stat_id][0].get("sum") or 0.0)
             else:
                 sums[stat_id] = 0.0
         return sums
