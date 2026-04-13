@@ -418,6 +418,9 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _backfill_history(self) -> None:
         """Fetch and inject statistics for the last BACKFILL_DAYS days."""
         _LOGGER.info("Aurora+: starting historical data backfill (%d days)", BACKFILL_DAYS)
+        # Carry running sums across days in memory so we don't depend on
+        # async_add_external_statistics committing before the next read.
+        sums = await self._get_last_sums()
         for idx in range(-BACKFILL_DAYS, 0):
             try:
                 usage = await self.client.async_get_usage(timespan="day", index=idx, nmi=getattr(self, "_nmi", None))
@@ -425,40 +428,49 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 records = usage.get("MeteredUsageRecords", [])
                 # NoDataFlag is unreliable — check for actual kWh data in hourly records instead
                 if date_key and date_key not in self._injected_dates and self._has_real_kwh_data(records):
-                    await self._inject_statistics(records, date_key)
+                    sums = await self._inject_statistics(records, date_key, sums)
             except Exception as err:
                 _LOGGER.warning(
                     "Aurora+: could not backfill index %d: %s", idx, err
                 )
 
+    async def _get_last_sums(self) -> dict[str, float]:
+        """Retrieve the last cumulative sum for each statistic from the recorder.
+
+        The types argument must explicitly include "sum" — passing set() causes
+        HA to return rows with only start/end, which would silently default the
+        sum to 0 and reset cumulative totals on every call.
+        """
+        sums: dict[str, float] = {}
+        for stat_id in _STAT_METADATA:
+            last = await get_instance(self.hass).async_add_executor_job(
+                get_last_statistics, self.hass, 1, stat_id, True, {"sum"}
+            )
+            if last and stat_id in last and last[stat_id]:
+                sums[stat_id] = float(last[stat_id][0].get("sum") or 0.0)
+            else:
+                sums[stat_id] = 0.0
+        return sums
+
     async def _inject_statistics(
-        self, records: list[dict[str, Any]], date_key: str
-    ) -> None:
+        self,
+        records: list[dict[str, Any]],
+        date_key: str,
+        sums: dict[str, float] | None = None,
+    ) -> dict[str, float]:
         """Inject hourly metered records as external statistics into the recorder.
 
         StatisticData.sum must be a monotonically increasing cumulative total.
         StatisticData.state holds the per-period (hourly) value.
+
+        Args:
+            sums: Starting cumulative sums. If None, reads them from the recorder.
+
+        Returns:
+            The updated cumulative sums after all records have been processed.
         """
-        # Retrieve the last cumulative sum for each statistic from the recorder
-        # so that new data continues the running total instead of resetting to 0.
-        sums: dict[str, float] = {}
-        for stat_id in (
-            STAT_ID_TOTAL_KWH,
-            STAT_ID_T41_KWH,
-            STAT_ID_T31_KWH,
-            STAT_ID_T93PEAK_KWH,
-            STAT_ID_T93OFFPEAK_KWH,
-            STAT_ID_SOLAR_KWH,
-            STAT_ID_TOTAL_DOLLARS,
-            STAT_ID_SOLAR_DOLLARS,
-        ):
-            last = await get_instance(self.hass).async_add_executor_job(
-                get_last_statistics, self.hass, 1, stat_id, True, set()
-            )
-            if last and stat_id in last:
-                sums[stat_id] = last[stat_id][0].get("sum", 0.0) or 0.0
-            else:
-                sums[stat_id] = 0.0
+        if sums is None:
+            sums = await self._get_last_sums()
         stats: dict[str, list[StatisticData]] = {k: [] for k in sums}
 
         # Process only hourly records — the Day-level record has null KilowattHourUsage
@@ -529,6 +541,7 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             {"injected_dates": list(self._injected_dates)}
         )
         _LOGGER.debug("Aurora+: injected statistics for %s", date_key)
+        return sums
 
     def _calculate_total_savings(self, events: list[dict]) -> Optional[float]:
         """Sum abs(Customer.Cost) for all completed Power Hour events.
