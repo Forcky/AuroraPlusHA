@@ -59,7 +59,8 @@ views:
           type: custom:mushroom-template-card
           primary: "🎉 Power Hour — Electricity is FREE right now!"
           secondary: >
-            Free power until {{ states('sensor.aurora_energy_power_hour_end') | as_datetime | as_timestamp | timestamp_custom('%I:%M %p') }}
+            {% set end = states('sensor.aurora_energy_power_hour_end') %}
+            Free power until {{ end | as_timestamp | timestamp_custom('%I:%M %p') if end not in ['unknown', 'unavailable'] else 'soon' }}
           icon: mdi:star-shooting
           icon_color: yellow
           card_mod:
@@ -75,9 +76,14 @@ views:
           type: custom:mushroom-template-card
           primary: "⚡ Free Power Coming Up!"
           secondary: >
+            {% set start = states('sensor.aurora_energy_power_hour_start') %}
+            {% set end = states('sensor.aurora_energy_power_hour_end') %}
             {{ states('sensor.aurora_energy_power_hour_event') }} —
-            free from {{ states('sensor.aurora_energy_power_hour_start') | as_datetime | as_timestamp | timestamp_custom('%I:%M %p') }}
-            to {{ states('sensor.aurora_energy_power_hour_end') | as_datetime | as_timestamp | timestamp_custom('%I:%M %p') }}
+            {% if start not in ['unknown', 'unavailable'] and end not in ['unknown', 'unavailable'] %}
+              free from {{ start | as_timestamp | timestamp_custom('%I:%M %p') }} to {{ end | as_timestamp | timestamp_custom('%I:%M %p') }}
+            {% else %}
+              timeslot details loading
+            {% endif %}
           icon: mdi:clock-star-four-points
           icon_color: orange
 
