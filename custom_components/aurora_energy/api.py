@@ -18,10 +18,12 @@ from .const import (
     CONF_REFRESH_TOKEN,
     ENDPOINT_CUSTOMERS,
     ENDPOINT_LOGIN,
+    ENDPOINT_PAYMENT_ACTIVE,
     ENDPOINT_POWERHOUR_ALL,
     ENDPOINT_POWERHOUR_UPCOMING,
     ENDPOINT_REFRESH,
     ENDPOINT_USAGE,
+    ENDPOINT_USAGE_BILLING_PERIOD,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -241,6 +243,26 @@ class AuroraApiClient:
         if isinstance(result, list):
             return result
         return result.get("value") or result.get("items") or []
+
+    async def async_get_billing_period(
+        self, service_agreement_id: str, customer_id: str
+    ) -> dict[str, Any]:
+        """GET /usage/billing-period — totals for the entire current billing cycle."""
+        if not self._access_token:
+            await self.async_login(self._id_token)
+        url = BASE_URL + ENDPOINT_USAGE_BILLING_PERIOD
+        params = {
+            "serviceAgreementID": service_agreement_id,
+            "customerId": customer_id,
+        }
+        return await self._get_with_retry(url, params)
+
+    async def async_get_payment_status(self, account_number: str) -> dict[str, Any]:
+        """GET /payment/activepayment/{accountNumber} — direct debit / auto-payment flags."""
+        if not self._access_token:
+            await self.async_login(self._id_token)
+        url = BASE_URL + ENDPOINT_PAYMENT_ACTIVE.format(account_number=account_number)
+        return await self._get_with_retry(url)
 
     async def async_get_powerhour_all(self) -> list[dict[str, Any]]:
         """GET /powerhour/all — all Power Hour events including historical (for savings)."""

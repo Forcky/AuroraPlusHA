@@ -5,6 +5,91 @@ views:
     icon: mdi:lightning-bolt
     cards:
 
+      # ── Current Tariff Period ────────────────────────────────────────
+      - type: custom:mushroom-template-card
+        primary: >
+          {% if is_state('sensor.aurora_energy_t93_tariff_period', 'peak') %}
+            ⚡ Peak Rate
+          {% else %}
+            💤 Off-Peak Rate
+          {% endif %}
+        secondary: >
+          {% if is_state('sensor.aurora_energy_t93_tariff_period', 'peak') %}
+            Higher rates apply — consider deferring heavy loads
+          {% else %}
+            Lower rates apply — good time to run dishwasher, washing machine, etc.
+          {% endif %}
+        icon: >
+          {% if is_state('sensor.aurora_energy_t93_tariff_period', 'peak') %}
+            mdi:lightning-bolt
+          {% else %}
+            mdi:lightning-bolt-off
+          {% endif %}
+        icon_color: >
+          {% if is_state('sensor.aurora_energy_t93_tariff_period', 'peak') %}
+            red
+          {% else %}
+            green
+          {% endif %}
+        card_mod:
+          style: |
+            ha-card {
+              background: {% if is_state('sensor.aurora_energy_t93_tariff_period', 'peak') %}
+                rgba(255,50,50,0.12)
+              {% else %}
+                rgba(50,200,50,0.12)
+              {% endif %};
+            }
+
+      # ── Power Hours Status ───────────────────────────────────────────
+      - type: conditional
+        conditions:
+          - condition: state
+            entity: sensor.aurora_energy_power_hour_status
+            state: active
+        card:
+          type: custom:mushroom-template-card
+          primary: "🎉 Power Hour — Electricity is FREE right now!"
+          secondary: >
+            Free power until {{ states('sensor.aurora_energy_power_hour_end') | as_timestamp | timestamp_custom('%I:%M %p') }}
+          icon: mdi:star-shooting
+          icon_color: yellow
+          card_mod:
+            style: |
+              ha-card { background: rgba(255,215,0,0.18); }
+
+      - type: conditional
+        conditions:
+          - condition: state
+            entity: sensor.aurora_energy_power_hour_status
+            state: confirmed
+        card:
+          type: entities
+          title: "⚡ Power Hour Confirmed"
+          icon: mdi:clock-star-four-points
+          entities:
+            - entity: sensor.aurora_energy_power_hour_event
+              name: Event
+            - entity: sensor.aurora_energy_power_hour_start
+              name: Starts
+            - entity: sensor.aurora_energy_power_hour_end
+              name: Ends
+
+      - type: conditional
+        conditions:
+          - condition: state
+            entity: sensor.aurora_energy_power_hour_status
+            state: selection_pending
+        card:
+          type: entities
+          title: "⏳ Power Hour — Select Your Timeslot!"
+          icon: mdi:timer-sand
+          entities:
+            - entity: sensor.aurora_energy_power_hour_event
+              name: Event
+            - entity: sensor.aurora_energy_power_hour_selection_deadline
+              name: Select by
+
       # ── Account Balance ──────────────────────────────────────────────
       - type: horizontal-stack
         cards:
@@ -25,35 +110,50 @@ views:
         entities:
           - entity: sensor.aurora_energy_bill_total_amount
             name: Current Bill Total
+          - entity: sensor.aurora_energy_bill_due_date
+            name: Bill Due Date
+          - entity: sensor.aurora_energy_overdue_amount
+            name: Overdue Amount
+          - entity: sensor.aurora_energy_unpaid_bills
+            name: Unpaid Bills
           - entity: sensor.aurora_energy_average_daily_usage
             name: Avg Daily Spend
           - entity: sensor.aurora_energy_usage_days_remaining
             name: Days Remaining in Period
 
-      # ── Current Tariff + Yesterday's Usage ──────────────────────────
+      # ── Billing Period Totals ────────────────────────────────────────
       - type: horizontal-stack
         cards:
           - type: tile
-            entity: sensor.aurora_energy_t93_tariff_period
-            name: Tariff Period
+            entity: sensor.aurora_energy_billing_period_usage
+            name: This Period (kWh)
+          - type: tile
+            entity: sensor.aurora_energy_billing_period_cost
+            name: This Period (Cost)
+
+      - type: horizontal-stack
+        cards:
+          - type: tile
+            entity: sensor.aurora_energy_billing_period_solar_feed_in
+            name: Solar This Period
+          - type: tile
+            entity: sensor.aurora_energy_billing_period_solar_feed_in_earnings
+            name: Solar Earnings
+
+      # ── Yesterday's Usage ────────────────────────────────────────────
+      - type: horizontal-stack
+        cards:
           - type: tile
             entity: sensor.aurora_energy_daily_total_usage
             name: Yesterday's Usage
           - type: tile
             entity: sensor.aurora_energy_daily_total_cost
             name: Yesterday's Cost
-
-      # ── Solar ────────────────────────────────────────────────────────
-      - type: horizontal-stack
-        cards:
           - type: tile
             entity: sensor.aurora_energy_solar_feed_in
             name: Solar Feed-in
-          - type: tile
-            entity: sensor.aurora_energy_solar_feed_in_earnings
-            name: Feed-in Earnings
 
-      # ── Power Hours ──────────────────────────────────────────────────
+      # ── Power Hours Summary ──────────────────────────────────────────
       - type: entities
         title: Power Hours
         icon: mdi:clock-star-four-points

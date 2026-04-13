@@ -23,10 +23,18 @@ from homeassistant.util import dt as dt_util
 from .const import (
     DOMAIN,
     SENSOR_AMOUNT_OWED,
+    SENSOR_AUTO_PAYMENT,
     SENSOR_AVG_DAILY_USAGE,
+    SENSOR_BILL_DUE,
     SENSOR_BILL_TOTAL,
+    SENSOR_BP_COST,
+    SENSOR_BP_KWH,
+    SENSOR_BP_SOLAR_EARNINGS,
+    SENSOR_BP_SOLAR_KWH,
     SENSOR_DAYS_REMAINING,
+    SENSOR_DIRECT_DEBIT,
     SENSOR_ESTIMATED_BALANCE,
+    SENSOR_OVERDUE_AMOUNT,
     SENSOR_PH_END,
     SENSOR_PH_EVENT_NAME,
     SENSOR_PH_SELECTION_DEADLINE,
@@ -43,9 +51,12 @@ from .const import (
     SENSOR_T93OFFPEAK_KWH,
     SENSOR_T93PEAK_DOLLARS,
     SENSOR_T93PEAK_KWH,
+    SENSOR_TARIFF_PERIOD_END,
     SENSOR_TOTAL_DOLLARS,
     SENSOR_TOTAL_KWH,
     SENSOR_UNBILLED_AMOUNT,
+    SENSOR_UNPAID_BILLS,
+    SENSOR_UNREAD_NOTIFS,
 )
 from .coordinator import AuroraCoordinator
 
@@ -226,6 +237,122 @@ SENSOR_DESCRIPTIONS: tuple[AuroraSensorEntityDescription, ...] = (
         suggested_display_precision=2,
         entity_registry_enabled_default=False,
     ),
+    # --- Group A: extra billing fields (free — already in /customers/current) ---
+    AuroraSensorEntityDescription(
+        key=SENSOR_BILL_DUE,
+        name="Bill Due Date",
+        data_key=SENSOR_BILL_DUE,
+        native_unit_of_measurement=None,
+        device_class=SensorDeviceClass.TIMESTAMP,
+        state_class=None,
+        icon="mdi:calendar-alert",
+        entity_registry_enabled_default=False,
+    ),
+    AuroraSensorEntityDescription(
+        key=SENSOR_OVERDUE_AMOUNT,
+        name="Overdue Amount",
+        data_key=SENSOR_OVERDUE_AMOUNT,
+        native_unit_of_measurement="AUD",
+        device_class=SensorDeviceClass.MONETARY,
+        state_class=SensorStateClass.TOTAL,
+        icon="mdi:alert-circle-outline",
+        suggested_display_precision=2,
+        entity_registry_enabled_default=False,
+    ),
+    AuroraSensorEntityDescription(
+        key=SENSOR_UNPAID_BILLS,
+        name="Unpaid Bills",
+        data_key=SENSOR_UNPAID_BILLS,
+        native_unit_of_measurement=None,
+        device_class=None,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:file-document-alert",
+        entity_registry_enabled_default=False,
+    ),
+    AuroraSensorEntityDescription(
+        key=SENSOR_TARIFF_PERIOD_END,
+        name="Tariff Period End",
+        data_key=SENSOR_TARIFF_PERIOD_END,
+        native_unit_of_measurement=None,
+        device_class=SensorDeviceClass.TIMESTAMP,
+        state_class=None,
+        icon="mdi:calendar-end",
+        entity_registry_enabled_default=False,
+    ),
+    AuroraSensorEntityDescription(
+        key=SENSOR_UNREAD_NOTIFS,
+        name="Unread Notifications",
+        data_key=SENSOR_UNREAD_NOTIFS,
+        native_unit_of_measurement=None,
+        device_class=None,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:bell-badge",
+        entity_registry_enabled_default=False,
+    ),
+    # --- Group B: billing period totals (/usage/billing-period) ---
+    AuroraSensorEntityDescription(
+        key=SENSOR_BP_KWH,
+        name="Billing Period Usage",
+        data_key=SENSOR_BP_KWH,
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        device_class=SensorDeviceClass.ENERGY,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        icon="mdi:calendar-month",
+        suggested_display_precision=3,
+    ),
+    AuroraSensorEntityDescription(
+        key=SENSOR_BP_COST,
+        name="Billing Period Cost",
+        data_key=SENSOR_BP_COST,
+        native_unit_of_measurement="AUD",
+        device_class=SensorDeviceClass.MONETARY,
+        state_class=SensorStateClass.TOTAL,
+        icon="mdi:calendar-month",
+        suggested_display_precision=2,
+    ),
+    AuroraSensorEntityDescription(
+        key=SENSOR_BP_SOLAR_KWH,
+        name="Billing Period Solar Feed-in",
+        data_key=SENSOR_BP_SOLAR_KWH,
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        device_class=SensorDeviceClass.ENERGY,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        icon="mdi:solar-panel",
+        suggested_display_precision=3,
+    ),
+    AuroraSensorEntityDescription(
+        key=SENSOR_BP_SOLAR_EARNINGS,
+        name="Billing Period Solar Earnings",
+        data_key=SENSOR_BP_SOLAR_EARNINGS,
+        native_unit_of_measurement="AUD",
+        device_class=SensorDeviceClass.MONETARY,
+        state_class=SensorStateClass.TOTAL,
+        icon="mdi:solar-panel-large",
+        suggested_display_precision=2,
+    ),
+    # --- Group C: payment status (/payment/activepayment) ---
+    AuroraSensorEntityDescription(
+        key=SENSOR_DIRECT_DEBIT,
+        name="Direct Debit",
+        data_key=SENSOR_DIRECT_DEBIT,
+        native_unit_of_measurement=None,
+        device_class=SensorDeviceClass.ENUM,
+        state_class=None,
+        icon="mdi:bank-transfer",
+        options=["active", "inactive"],
+        entity_registry_enabled_default=False,
+    ),
+    AuroraSensorEntityDescription(
+        key=SENSOR_AUTO_PAYMENT,
+        name="Auto Payment",
+        data_key=SENSOR_AUTO_PAYMENT,
+        native_unit_of_measurement=None,
+        device_class=SensorDeviceClass.ENUM,
+        state_class=None,
+        icon="mdi:credit-card-clock",
+        options=["active", "inactive"],
+        entity_registry_enabled_default=False,
+    ),
     # --- Power Hours demand-response program ---
     AuroraSensorEntityDescription(
         key=SENSOR_PH_STATUS,
@@ -348,7 +475,11 @@ class AuroraSensor(CoordinatorEntity[AuroraCoordinator], SensorEntity):
     def native_value(self) -> Optional[Any]:
         if self.coordinator.data is None:
             return None
-        return self.coordinator.data.get(self.entity_description.data_key)
+        val = self.coordinator.data.get(self.entity_description.data_key)
+        # Convert booleans to ENUM-compatible strings for payment status sensors
+        if isinstance(val, bool):
+            return "active" if val else "inactive"
+        return val
 
     @property
     def available(self) -> bool:
@@ -367,11 +498,12 @@ class TariffPeriodSensor(SensorEntity):
     second regardless of whether Tasmania is in AEST or AEDT.
 
     Aurora T93 schedule (NEM clock, AEST UTC+10 — does NOT observe daylight saving):
-      Peak:     07:00–22:00 AEST, Monday–Friday
-      Off-peak: all other times
+      Peak:     07:00–10:00 AEST, Monday–Friday
+      Peak:     16:00–21:00 AEST, Monday–Friday
+      Off-peak: all other times (10:00–16:00, 21:00–07:00 weekdays, all weekend)
 
-    During AEDT (Tasmania daylight saving, UTC+11) peak appears as 08:00–23:00
-    local time, but the underlying NEM boundary is still 07:00–22:00 AEST.
+    During AEDT (Tasmania daylight saving, UTC+11) peak appears shifted by 1 hour
+    in local time, but the underlying NEM boundaries remain fixed in AEST.
     This sensor always computes against fixed UTC+10, never local Hobart time.
 
     Note: public holidays are treated as weekdays by this implementation.
@@ -400,10 +532,12 @@ class TariffPeriodSensor(SensorEntity):
     @property
     def native_value(self) -> str:
         # Always compute against AEST (UTC+10). The NEM tariff clock does not
-        # observe daylight saving, so during AEDT the peak window shifts to
-        # 08:00–23:00 local time but remains 07:00–22:00 AEST.
+        # observe daylight saving.
+        # Peak windows: 07:00–10:00 and 16:00–21:00, Monday–Friday only.
         now_aest = dt_util.utcnow().astimezone(self._AEST)
-        if now_aest.weekday() < 5 and 7 <= now_aest.hour < 22:
+        if now_aest.weekday() < 5 and (
+            7 <= now_aest.hour < 10 or 16 <= now_aest.hour < 21
+        ):
             return "peak"
         return "off_peak"
 
@@ -412,11 +546,13 @@ class TariffPeriodSensor(SensorEntity):
 
         Listeners fire at the fixed UTC times that correspond to the AEST
         boundaries, so they remain correct regardless of DST:
-          21:00 UTC = 07:00 AEST (peak start on weekdays)
-          12:00 UTC = 22:00 AEST (peak end on weekdays)
-          14:00 UTC = 00:00 AEST (weekday/weekend boundary)
+          21:00 UTC = 07:00 AEST (morning peak start)
+          00:00 UTC = 10:00 AEST (morning peak end → off-peak)
+          06:00 UTC = 16:00 AEST (afternoon peak start)
+          11:00 UTC = 21:00 AEST (afternoon peak end → off-peak)
+          14:00 UTC = 00:00 AEST (midnight weekday/weekend boundary)
         """
-        for hr in (12, 14, 21):
+        for hr in (0, 6, 11, 14, 21):
             self._unsub_listeners.append(
                 async_track_utc_time_change(
                     self.hass,

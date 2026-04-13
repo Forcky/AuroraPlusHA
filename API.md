@@ -193,6 +193,25 @@ Returns account and billing information for the authenticated customer.
 - `EstimatedBalance` and `UsageDaysRemaining` may be `null` for standard billing accounts (non-PAYG)
 - The `NMI` (National Metering Identifier) in `Meters[0]` is needed as a query parameter for the usage endpoint
 
+**Additional premise fields (may be null depending on account state):**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `BillDue` | date string or null | Date the current bill is due for payment |
+| `BillOverDueAmount` | float or null | Amount overdue (0 when not overdue) |
+| `NumberOfUnpaidBills` | int or null | Count of unpaid bills |
+| `CurrentTimeOfUse` | string or null | Active tariff code (e.g. `"T93"`) |
+| `CurrentTimeOfUsePeriodEndDate` | date string or null | When the current tariff contract period ends |
+| `HasActivePaymentExtension` | bool | Whether a payment extension arrangement is active |
+| `HasActivePaymentPlans` | bool | Whether a payment plan is active |
+
+**Additional customer root fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `UnreadNotificationsCount` | int | Number of unread in-app notifications |
+| `HasSolarProduct` | bool | Whether the account has a solar product |
+
 ---
 
 ### `GET /api/usage/{timespan}`
@@ -386,6 +405,58 @@ Returns all Power Hour events including completed historical events. Structure i
 **No query parameters required.**
 
 Used to calculate total lifetime Power Hour savings by summing `abs(Customer.Cost)` across all events where `Customer.Cost` is not null.
+
+---
+
+### `GET /api/usage/billing-period`
+
+Returns metered usage totals for the entire current billing cycle (typically a quarter).
+
+**Query parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `serviceAgreementID` | Yes | From the active premise |
+| `customerId` | Yes | From the top-level customer object |
+
+**Response structure:** Same shape as `/api/usage/day` — `SummaryTotals`, `MeteredUsageRecords` (day-level), `NonMeteredUsageRecords`. The day-level `MeteredUsageRecords` contain `DollarValueUsage` only; `KilowattHourUsage` is null on day records.
+
+**Most useful fields:**
+
+```json
+{
+  "SummaryTotals": {
+    "KilowattHourUsage": { "T140": 42.3, "T93OFFPEAK": 310.1, "T93PEAK": 220.5, "Total": 530.6 },
+    "DollarValueUsage": { "T140": -3.71, "T93OFFPEAK": 51.69, "T93PEAK": 78.25, "Other": 45.00, "Total": 171.23 }
+  }
+}
+```
+
+**Note:** `Total` in `KilowattHourUsage` excludes T140 (solar). `Total` in `DollarValueUsage` includes the supply charge (`Other`). T140 dollars are negative (credit).
+
+---
+
+### `GET /api/payment/activepayment/{accountNumber}`
+
+Returns which payment methods are currently active for an account.
+
+**Path parameter:** `{accountNumber}` = `ServiceAgreementID` from the active premise.
+
+**No query parameters required.**
+
+**Response:**
+
+```json
+{
+  "IsDirectDebitActive": true,
+  "IsAutoPaymentActive": false
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `IsDirectDebitActive` | bool | Whether a direct debit arrangement is active |
+| `IsAutoPaymentActive` | bool | Whether auto-payment (card) is configured |
 
 ---
 

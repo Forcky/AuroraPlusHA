@@ -30,12 +30,23 @@ from .const import (
     BACKFILL_DAYS,
     DOMAIN,
     POLL_INTERVAL,
+    SENSOR_AUTO_PAYMENT,
+    SENSOR_BILL_DUE,
+    SENSOR_BP_COST,
+    SENSOR_BP_KWH,
+    SENSOR_BP_SOLAR_EARNINGS,
+    SENSOR_BP_SOLAR_KWH,
+    SENSOR_DIRECT_DEBIT,
+    SENSOR_OVERDUE_AMOUNT,
     SENSOR_PH_END,
     SENSOR_PH_EVENT_NAME,
     SENSOR_PH_SELECTION_DEADLINE,
     SENSOR_PH_START,
     SENSOR_PH_STATUS,
     SENSOR_PH_TOTAL_SAVINGS,
+    SENSOR_TARIFF_PERIOD_END,
+    SENSOR_UNPAID_BILLS,
+    SENSOR_UNREAD_NOTIFS,
     STAT_ID_SOLAR_DOLLARS,
     STAT_ID_SOLAR_KWH,
     STAT_ID_T31_KWH,
@@ -55,6 +66,24 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _parse_date_field(dt_str: Optional[str]) -> Optional[datetime.datetime]:
+    """Parse a date or datetime string from the Aurora API to a UTC-aware datetime.
+
+    Handles full ISO datetimes ("2026-05-15T00:00:00") and date-only strings
+    ("2026-05-15"). Date-only values are treated as midnight UTC.
+    """
+    if not dt_str:
+        return None
+    dt = dt_util.parse_datetime(dt_str)
+    if dt:
+        return dt_util.as_utc(dt)
+    try:
+        d = datetime.date.fromisoformat(dt_str[:10])
+        return datetime.datetime(d.year, d.month, d.day, tzinfo=datetime.timezone.utc)
+    except (ValueError, TypeError):
+        return None
 
 
 def _parse_hobart_naive(
@@ -212,7 +241,25 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except Exception as err:
             _LOGGER.warning("Aurora+: Power Hours fetch failed: %s", err)
 
-        parsed = self._parse(customer_data, usage_data, powerhour_upcoming)
+        # Fetch billing period totals — isolated try/except
+        billing_period: dict = {}
+        try:
+            billing_period = await self.client.async_get_billing_period(
+                self.client._service_agreement_id, self.client._customer_id
+            )
+        except Exception as err:
+            _LOGGER.warning("Aurora+: billing-period fetch failed: %s", err)
+
+        # Fetch payment status — isolated try/except
+        payment_status: dict = {}
+        try:
+            payment_status = await self.client.async_get_payment_status(
+                self.client._service_agreement_id
+            )
+        except Exception as err:
+            _LOGGER.warning("Aurora+: payment status fetch failed: %s", err)
+
+        parsed = self._parse(customer_data, usage_data, powerhour_upcoming, billing_period, payment_status)
         parsed[SENSOR_PH_TOTAL_SAVINGS] = self._powerhour_savings_cache
         self._nmi = parsed.get("nmi")
 
@@ -238,6 +285,8 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         customer: Any,
         usage: dict[str, Any],
         powerhour_upcoming: Optional[list] = None,
+        billing_period: Optional[dict] = None,
+        payment_status: Optional[dict] = None,
     ) -> dict[str, Any]:
         """Normalise raw API responses into a flat dict for sensors."""
         if isinstance(customer, list):
@@ -259,6 +308,13 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         data["average_daily_usage"] = premise.get("AverageDailyUsage")
         data["usage_days_remaining"] = premise.get("UsageDaysRemaining")
         data["bill_total_amount"] = premise.get("BillTotalAmount")
+
+        # Group A: extra fields from existing /customers/current response
+        data[SENSOR_BILL_DUE]          = _parse_date_field(premise.get("BillDue"))
+        data[SENSOR_OVERDUE_AMOUNT]    = premise.get("BillOverDueAmount")
+        data[SENSOR_UNPAID_BILLS]      = premise.get("NumberOfUnpaidBills")
+        data[SENSOR_TARIFF_PERIOD_END] = _parse_date_field(premise.get("CurrentTimeOfUsePeriodEndDate"))
+        data[SENSOR_UNREAD_NOTIFS]     = customer.get("UnreadNotificationsCount")
 
         # Usage summary totals
         summary = usage.get("SummaryTotals", {})
@@ -283,6 +339,20 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         t140_dollars = dollar_summary.get(TARIFF_T140)
         data["solar_feedin_kwh"] = t140_kwh
         data["solar_feedin_dollars"] = abs(t140_dollars) if t140_dollars is not None else None
+
+        # Group B: billing period totals (/usage/billing-period)
+        bp_summary = (billing_period or {}).get("SummaryTotals") or {}
+        bp_kwh = bp_summary.get("KilowattHourUsage") or {}
+        bp_dollars = bp_summary.get("DollarValueUsage") or {}
+        data[SENSOR_BP_KWH]  = bp_kwh.get(TARIFF_TOTAL)
+        data[SENSOR_BP_COST] = bp_dollars.get(TARIFF_TOTAL)
+        t140_bp = bp_dollars.get(TARIFF_T140)
+        data[SENSOR_BP_SOLAR_KWH]      = bp_kwh.get(TARIFF_T140)
+        data[SENSOR_BP_SOLAR_EARNINGS] = abs(t140_bp) if t140_bp is not None else None
+
+        # Group C: payment status (/payment/activepayment/{accountNumber})
+        data[SENSOR_DIRECT_DEBIT]  = (payment_status or {}).get("IsDirectDebitActive")
+        data[SENSOR_AUTO_PAYMENT]  = (payment_status or {}).get("IsAutoPaymentActive")
 
         # Raw records + metadata for statistics injection
         data["metered_records"] = usage.get("MeteredUsageRecords", [])

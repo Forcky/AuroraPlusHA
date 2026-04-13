@@ -9,6 +9,7 @@ A custom Home Assistant integration that pulls your Aurora Energy Tasmania billi
 - Solar feed-in (kWh exported and earnings)
 - Real-time T93 tariff period sensor (`peak` / `off_peak`), DST-correct
 - Power Hours demand-response program sensors (status, timeslot, savings)
+- Billing period totals (cumulative kWh and cost for the current billing cycle)
 - Historical statistics for the Energy Dashboard (backfills 9 days on first run)
 - Automatic hourly refresh
 
@@ -100,6 +101,10 @@ If setup succeeds, a device called **Aurora Energy** will appear with all sensor
 | Power Hour End | End time of your accepted Power Hours slot | — |
 | Power Hour Selection Deadline | Deadline to select a timeslot | — |
 | Power Hour Total Savings | Lifetime savings from Power Hours events | AUD |
+| Billing Period Usage | Total kWh consumed in current billing cycle | kWh |
+| Billing Period Cost | Total cost in current billing cycle | AUD |
+| Billing Period Solar Feed-in | Total solar exported in current billing cycle | kWh |
+| Billing Period Solar Earnings | Total solar feed-in credit in current billing cycle | AUD |
 
 **Power Hour Status values:**
 
@@ -124,6 +129,13 @@ The following sensors exist but are disabled by default. Enable them via **Setti
 | T93 Peak Cost | T93 peak tariff cost (AUD) | T93 time-of-use accounts |
 | T93 Off-Peak Usage | T93 off-peak tariff consumption (kWh) | T93 time-of-use accounts |
 | T93 Off-Peak Cost | T93 off-peak tariff cost (AUD) | T93 time-of-use accounts |
+| Bill Due Date | Date the current bill is due | All accounts |
+| Overdue Amount | Amount currently overdue | All accounts |
+| Unpaid Bills | Count of unpaid bills | All accounts |
+| Tariff Period End | When the current tariff contract period ends | T93 accounts |
+| Unread Notifications | Number of unread Aurora+ notifications | All accounts |
+| Direct Debit | Whether a direct debit arrangement is active (`active`/`inactive`) | All accounts |
+| Auto Payment | Whether auto-payment (card) is configured (`active`/`inactive`) | All accounts |
 
 ---
 
@@ -163,6 +175,7 @@ The following additional statistics are available for use in custom dashboard ca
 | Billing data | Every hour | Balance, amount owed, etc. update immediately |
 | Usage data | Every hour | Reflects the previous day; Aurora releases meter data around 8–9am AEST each morning |
 | Energy Dashboard stats | Once per day | Injected automatically when daily data becomes available |
+| Billing period totals | Every hour | Running kWh/cost totals for the current billing cycle |
 | Power Hours (upcoming) | Every hour | Active event, timeslot, and selection deadline |
 | Power Hours (total savings) | Once per day | Recalculated from full event history once daily |
 
@@ -195,11 +208,13 @@ Aurora's T93 tariff boundaries are set by the **NEM (National Electricity Market
 
 | Period | AEST time (year-round) | AEDT local time (Oct–Apr) | Days |
 |--------|------------------------|---------------------------|------|
-| Peak | 7:00 am – 10:00 pm | 8:00 am – 11:00 pm | Monday – Friday |
-| Off-peak | 10:00 pm – 7:00 am | 11:00 pm – 8:00 am | Monday – Friday |
+| Peak | 7:00 am – 10:00 am | 8:00 am – 11:00 am | Monday – Friday |
+| Peak | 4:00 pm – 9:00 pm | 5:00 pm – 10:00 pm | Monday – Friday |
+| Off-peak | 10:00 am – 4:00 pm | 11:00 am – 5:00 pm | Monday – Friday |
+| Off-peak | 9:00 pm – 7:00 am | 10:00 pm – 8:00 am | Monday – Friday |
 | Off-peak | All day | All day | Saturday & Sunday |
 
-The sensor always computes against fixed AEST (UTC+10) regardless of local Hobart time, and its state transitions fire at the correct UTC times (`21:00 UTC` = 7am AEST, `12:00 UTC` = 10pm AEST).
+The sensor always computes against fixed AEST (UTC+10) regardless of local Hobart time. State transitions fire at the exact UTC times: `21:00` (7am peak start), `00:00` (10am off-peak), `06:00` (4pm peak start), `11:00` (9pm off-peak), `14:00` (midnight weekday boundary).
 
 > **Note:** Public holidays are currently treated as weekdays.
 

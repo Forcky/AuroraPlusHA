@@ -17,8 +17,10 @@ ENDPOINT_LOGIN = "/identity/LoginToken"
 ENDPOINT_REFRESH = "/identity/refreshToken"
 ENDPOINT_CUSTOMERS = "/customers/current"
 ENDPOINT_USAGE = "/usage/{timespan}"
-ENDPOINT_POWERHOUR_UPCOMING = "/powerhour/upcoming-active"
-ENDPOINT_POWERHOUR_ALL      = "/powerhour/all"
+ENDPOINT_POWERHOUR_UPCOMING   = "/powerhour/upcoming-active"
+ENDPOINT_POWERHOUR_ALL        = "/powerhour/all"
+ENDPOINT_USAGE_BILLING_PERIOD = "/usage/billing-period"
+ENDPOINT_PAYMENT_ACTIVE       = "/payment/activepayment/{account_number}"
 
 POLL_INTERVAL = timedelta(hours=1)
 
@@ -62,6 +64,23 @@ SENSOR_PH_START              = "powerhour_start"
 SENSOR_PH_END                = "powerhour_end"
 SENSOR_PH_SELECTION_DEADLINE = "powerhour_selection_deadline"
 SENSOR_PH_TOTAL_SAVINGS      = "powerhour_total_savings"
+
+# Group A: extra fields already in /customers/current response
+SENSOR_BILL_DUE          = "bill_due_date"
+SENSOR_OVERDUE_AMOUNT    = "overdue_amount"
+SENSOR_UNPAID_BILLS      = "unpaid_bills"
+SENSOR_TARIFF_PERIOD_END = "tariff_period_end"
+SENSOR_UNREAD_NOTIFS     = "unread_notifications"
+
+# Group B: billing period totals (/usage/billing-period)
+SENSOR_BP_KWH            = "billing_period_kwh"
+SENSOR_BP_COST           = "billing_period_cost"
+SENSOR_BP_SOLAR_KWH      = "billing_period_solar_kwh"
+SENSOR_BP_SOLAR_EARNINGS = "billing_period_solar_earnings"
+
+# Group C: payment status (/payment/activepayment/{accountNumber})
+SENSOR_DIRECT_DEBIT      = "direct_debit_active"
+SENSOR_AUTO_PAYMENT      = "auto_payment_active"
 
 # External statistic IDs for the Energy Dashboard
 STAT_ID_TOTAL_KWH = f"{DOMAIN}:total_kwh"
