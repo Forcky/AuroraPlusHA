@@ -385,7 +385,9 @@ Returns current and upcoming Power Hour events for the authenticated account.
 | `PowerHourEventId` | int | Unique event identifier |
 | `StartDateTime` | local datetime | When the event was announced (naive, Australia/Hobart) |
 | `OfferExpiryDateTime` | local datetime | Deadline to select a timeslot (naive, Australia/Hobart) |
-| `TimeslotAccepted` | object or null | The timeslot the customer has selected; `null` if no selection made yet |
+| `TimeslotAccepted` | object or null | The timeslot the customer has accepted; `null` if no selection made yet |
+| `TimeslotAccepted.StartDateTime` | local datetime | When the customer's free-power window begins |
+| `TimeslotAccepted.EndDateTime` | local datetime | When the customer's free-power window ends |
 | `TimeslotAll` | array | All available timeslots to choose from |
 | `Customer.Usage` | float or null | kWh used during the event — populated after the event completes |
 | `Customer.Cost` | float or null | Savings earned during the event — populated after the event completes |
@@ -393,8 +395,10 @@ Returns current and upcoming Power Hour events for the authenticated account.
 **Key notes:**
 - All `StartDateTime`, `EndDateTime`, and `OfferExpiryDateTime` values are **naive local time** (Australia/Hobart) with **no timezone suffix** — must be interpreted as `Australia/Hobart` when converting to UTC
 - `TimeslotAccepted` is `null` when the customer has not yet selected a timeslot
+- `TimeslotAccepted.StartDateTime` and `TimeslotAccepted.EndDateTime` define the exact free-power window — these map to the `Power Hour Start` and `Power Hour End` HA sensors
 - `OfferExpiryDateTime` is typically 5 minutes before the last available timeslot starts
 - `TimeslotAll` offers multiple days and time windows to choose from; each slot has its own `ExpiryDateTime` (5 min before that slot starts)
+- The event-level `StartDateTime` is when the event was **announced**, not when free power starts — the timeslot `StartDateTime` is what matters for determining the free-power window
 
 ---
 

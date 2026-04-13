@@ -96,9 +96,9 @@ If setup succeeds, a device called **Aurora Energy** will appear with all sensor
 | Solar Feed-in Earnings | Previous day's solar feed-in credit | AUD |
 | T93 Tariff Period | Current tariff period: `peak` or `off_peak` | — |
 | Power Hour Status | Current Power Hours state (see below) | — |
-| Power Hour Event | Name of the active Power Hours event | — |
-| Power Hour Start | Start time of your accepted Power Hours slot | — |
-| Power Hour End | End time of your accepted Power Hours slot | — |
+| Power Hour Event | Name of the upcoming or active Power Hours event | — |
+| Power Hour Start | Start of your accepted free-power timeslot | — |
+| Power Hour End | End of your accepted free-power timeslot | — |
 | Power Hour Selection Deadline | Deadline to select a timeslot | — |
 | Power Hour Total Savings | Lifetime savings from Power Hours events | AUD |
 | Billing Period Usage | Total kWh consumed in current billing cycle | kWh |
@@ -111,9 +111,11 @@ If setup succeeds, a device called **Aurora Energy** will appear with all sensor
 | Value | Meaning |
 |-------|---------|
 | `no_event` | No upcoming Power Hours event |
-| `selection_pending` | Event available but you haven't selected a timeslot yet |
-| `confirmed` | Timeslot selected, event not yet started |
-| `active` | Power Hours event is currently running |
+| `selection_pending` | An event has been announced but you haven't selected a timeslot yet — act before the **Selection Deadline** |
+| `confirmed` | You've accepted a timeslot — free electricity starts at **Power Hour Start** and ends at **Power Hour End** |
+| `active` | Your Power Hours timeslot is currently running — electricity is free right now |
+
+> **Note:** The status sensor is computed at each hourly poll. The **Power Hour Start** and **Power Hour End** timestamp sensors are the authoritative source for the exact free-power window — the example dashboard uses them directly for real-time detection rather than waiting for the next poll.
 
 ### Disabled by default
 

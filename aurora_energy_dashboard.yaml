@@ -42,16 +42,24 @@ views:
             }
 
       # ── Power Hours Status ───────────────────────────────────────────
+      # Active check uses start/end times directly for real-time detection —
+      # the status sensor only updates hourly so could be up to 59 min late.
       - type: conditional
         conditions:
-          - condition: state
-            entity: sensor.aurora_energy_power_hour_status
-            state: active
+          - condition: template
+            value_template: >
+              {% set start = states('sensor.aurora_energy_power_hour_start') %}
+              {% set end = states('sensor.aurora_energy_power_hour_end') %}
+              {% if start not in ['unknown', 'unavailable'] and end not in ['unknown', 'unavailable'] %}
+                {{ as_datetime(start) <= now() <= as_datetime(end) }}
+              {% else %}
+                false
+              {% endif %}
         card:
           type: custom:mushroom-template-card
           primary: "🎉 Power Hour — Electricity is FREE right now!"
           secondary: >
-            Free power until {{ states('sensor.aurora_energy_power_hour_end') | as_timestamp | timestamp_custom('%I:%M %p') }}
+            Free power until {{ states('sensor.aurora_energy_power_hour_end') | as_datetime | as_timestamp | timestamp_custom('%I:%M %p') }}
           icon: mdi:star-shooting
           icon_color: yellow
           card_mod:
@@ -64,16 +72,14 @@ views:
             entity: sensor.aurora_energy_power_hour_status
             state: confirmed
         card:
-          type: entities
-          title: "⚡ Power Hour Confirmed"
+          type: custom:mushroom-template-card
+          primary: "⚡ Free Power Coming Up!"
+          secondary: >
+            {{ states('sensor.aurora_energy_power_hour_event') }} —
+            free from {{ states('sensor.aurora_energy_power_hour_start') | as_datetime | as_timestamp | timestamp_custom('%I:%M %p') }}
+            to {{ states('sensor.aurora_energy_power_hour_end') | as_datetime | as_timestamp | timestamp_custom('%I:%M %p') }}
           icon: mdi:clock-star-four-points
-          entities:
-            - entity: sensor.aurora_energy_power_hour_event
-              name: Event
-            - entity: sensor.aurora_energy_power_hour_start
-              name: Starts
-            - entity: sensor.aurora_energy_power_hour_end
-              name: Ends
+          icon_color: orange
 
       - type: conditional
         conditions:
