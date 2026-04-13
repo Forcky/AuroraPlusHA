@@ -405,7 +405,7 @@ SENSOR_DESCRIPTIONS: tuple[AuroraSensorEntityDescription, ...] = (
         data_key="powerhour_total_savings",
         native_unit_of_measurement="AUD",
         device_class=SensorDeviceClass.MONETARY,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
         icon="mdi:piggy-bank",
         suggested_display_precision=2,
     ),
