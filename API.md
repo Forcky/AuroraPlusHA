@@ -234,7 +234,7 @@ Returns metered usage records for the specified time period.
 |-----------|----------|-------------|
 | `serviceAgreementID` | Yes | From the **active** premise (`IsActive: true`) |
 | `customerId` | Yes | From the top-level customer object (`CustomerID`) |
-| `index` | Yes | `-1` = most recent period, `-2` = previous, down to `-9` |
+| `index` | Yes | `-1` = most recent completed period, `-2` = previous, down to `-9`. `index=0` is undocumented — may return today's in-progress partial data on some accounts. |
 | `nmi` | Recommended | NMI from `Meters[0].NMI` — required to get non-null usage values |
 
 **Example request:**
@@ -542,7 +542,7 @@ A day period starting at `2026-04-05T14:00:00Z` corresponds to **midnight AEST o
 
 Aurora Energy typically makes the previous day's meter data available at approximately **8–9am AEST** each morning. Until then, the API returns records with `KilowattHourUsage: null` and `SummaryTotals` with zero values.
 
-Querying with `index=-1` returns the most recent available period. `index=-9` is the oldest available (approximately 9 days back).
+Querying with `index=-1` returns the most recent available completed period. `index=-9` is the oldest available (approximately 9 days back). `index=0` is undocumented — it may return today's partial in-progress data (hours completed so far), but behaviour varies: it may return yesterday's data or an error. Do not rely on it being supported.
 
 ---
 

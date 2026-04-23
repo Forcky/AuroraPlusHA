@@ -42,19 +42,11 @@ views:
             }
 
       # ── Power Hours Status ───────────────────────────────────────────
-      # Active check uses start/end times directly for real-time detection —
-      # the status sensor only updates hourly so could be up to 59 min late.
       - type: conditional
         conditions:
-          - condition: template
-            value_template: >
-              {% set start = states('sensor.aurora_energy_power_hour_start') %}
-              {% set end = states('sensor.aurora_energy_power_hour_end') %}
-              {% if start not in ['unknown', 'unavailable'] and end not in ['unknown', 'unavailable'] %}
-                {{ as_datetime(start) <= now() <= as_datetime(end) }}
-              {% else %}
-                false
-              {% endif %}
+          - condition: state
+            entity: sensor.aurora_energy_power_hour_status
+            state: active
         card:
           type: custom:mushroom-template-card
           primary: "🎉 Power Hour — Electricity is FREE right now!"
@@ -149,7 +141,7 @@ views:
             entity: sensor.aurora_energy_billing_period_solar_feed_in
             name: Solar This Period
           - type: tile
-            entity: sensor.aurora_energy_billing_period_solar_feed_in_earnings
+            entity: sensor.aurora_energy_billing_period_solar_earnings
             name: Solar Earnings
 
       # ── Yesterday's Usage ────────────────────────────────────────────
@@ -164,6 +156,33 @@ views:
           - type: tile
             entity: sensor.aurora_energy_solar_feed_in
             name: Solar Feed-in
+
+      # ── Hourly Breakdown (Yesterday) ────────────────────────────────
+      - type: statistics-graph
+        title: Hourly Usage — Yesterday
+        days_to_show: 2
+        period: hour
+        chart_type: bar
+        stat_types:
+          - change
+        entities:
+          - entity: aurora_energy:total_kwh
+            name: Consumption (kWh)
+          - entity: aurora_energy:solar_feedin_kwh
+            name: Solar Feed-in (kWh)
+
+      - type: statistics-graph
+        title: Hourly Peak vs Off-Peak — Yesterday
+        days_to_show: 2
+        period: hour
+        chart_type: bar
+        stat_types:
+          - change
+        entities:
+          - entity: aurora_energy:t93peak_kwh
+            name: Peak (kWh)
+          - entity: aurora_energy:t93offpeak_kwh
+            name: Off-Peak (kWh)
 
       # ── Power Hours Summary ──────────────────────────────────────────
       - type: entities
@@ -183,10 +202,10 @@ views:
           - entity: sensor.aurora_energy_power_hour_total_savings
             name: Total Savings
 
-      # ── Usage History (9 days) ───────────────────────────────────────
+      # ── Usage History (7 days) ───────────────────────────────────────
       - type: statistics-graph
-        title: Energy Usage — Last 9 Days
-        days_to_show: 9
+        title: Energy Usage — Last 7 Days
+        days_to_show: 7
         period: day
         chart_type: bar
         stat_types:
@@ -197,10 +216,10 @@ views:
           - entity: aurora_energy:solar_feedin_kwh
             name: Solar Feed-in (kWh)
 
-      # ── Peak vs Off-Peak History (9 days) ───────────────────────────
+      # ── Peak vs Off-Peak History (7 days) ───────────────────────────
       - type: statistics-graph
-        title: Peak vs Off-Peak Usage — Last 9 Days
-        days_to_show: 9
+        title: Peak vs Off-Peak Usage — Last 7 Days
+        days_to_show: 7
         period: day
         chart_type: bar
         stat_types:
@@ -211,10 +230,10 @@ views:
           - entity: aurora_energy:t93offpeak_kwh
             name: Off-Peak (kWh)
 
-      # ── Cost History (9 days) ────────────────────────────────────────
+      # ── Cost History (7 days) ────────────────────────────────────────
       - type: statistics-graph
-        title: Energy Cost — Last 9 Days
-        days_to_show: 9
+        title: Energy Cost — Last 7 Days
+        days_to_show: 7
         period: day
         chart_type: bar
         stat_types:

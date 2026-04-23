@@ -246,7 +246,6 @@ SENSOR_DESCRIPTIONS: tuple[AuroraSensorEntityDescription, ...] = (
         device_class=SensorDeviceClass.TIMESTAMP,
         state_class=None,
         icon="mdi:calendar-alert",
-        entity_registry_enabled_default=False,
     ),
     AuroraSensorEntityDescription(
         key=SENSOR_OVERDUE_AMOUNT,
@@ -257,7 +256,6 @@ SENSOR_DESCRIPTIONS: tuple[AuroraSensorEntityDescription, ...] = (
         state_class=SensorStateClass.TOTAL,
         icon="mdi:alert-circle-outline",
         suggested_display_precision=2,
-        entity_registry_enabled_default=False,
     ),
     AuroraSensorEntityDescription(
         key=SENSOR_UNPAID_BILLS,
@@ -267,7 +265,6 @@ SENSOR_DESCRIPTIONS: tuple[AuroraSensorEntityDescription, ...] = (
         device_class=None,
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:file-document-alert",
-        entity_registry_enabled_default=False,
     ),
     AuroraSensorEntityDescription(
         key=SENSOR_TARIFF_PERIOD_END,

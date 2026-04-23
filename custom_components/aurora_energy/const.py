@@ -93,4 +93,4 @@ STAT_ID_T93PEAK_KWH    = f"{DOMAIN}:t93peak_kwh"
 STAT_ID_T93OFFPEAK_KWH = f"{DOMAIN}:t93offpeak_kwh"
 
 # Number of past days to backfill on first run (API supports up to index -9)
-BACKFILL_DAYS = 9
+BACKFILL_DAYS = 7

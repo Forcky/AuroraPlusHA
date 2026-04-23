@@ -10,7 +10,7 @@ A custom Home Assistant integration that pulls your Aurora Energy Tasmania billi
 - Real-time T93 tariff period sensor (`peak` / `off_peak`), DST-correct
 - Power Hours demand-response program sensors (status, timeslot, savings)
 - Billing period totals (cumulative kWh and cost for the current billing cycle)
-- Historical statistics for the Energy Dashboard (backfills 9 days on first run)
+- Historical statistics for the Energy Dashboard (backfills 7 days on first run; today's partial hourly data updated each poll)
 - Automatic hourly refresh
 
 ---
@@ -105,6 +105,9 @@ If setup succeeds, a device called **Aurora Energy** will appear with all sensor
 | Billing Period Cost | Total cost in current billing cycle | AUD |
 | Billing Period Solar Feed-in | Total solar exported in current billing cycle | kWh |
 | Billing Period Solar Earnings | Total solar feed-in credit in current billing cycle | AUD |
+| Bill Due Date | Date the current bill is due | — |
+| Overdue Amount | Amount currently overdue | AUD |
+| Unpaid Bills | Count of unpaid bills | — |
 
 **Power Hour Status values:**
 
@@ -115,7 +118,7 @@ If setup succeeds, a device called **Aurora Energy** will appear with all sensor
 | `confirmed` | You've accepted a timeslot — free electricity starts at **Power Hour Start** and ends at **Power Hour End** |
 | `active` | Your Power Hours timeslot is currently running — electricity is free right now |
 
-> **Note:** The status sensor is computed at each hourly poll. The **Power Hour Start** and **Power Hour End** timestamp sensors are the authoritative source for the exact free-power window — the example dashboard uses them directly for real-time detection rather than waiting for the next poll.
+> **Note:** The coordinator evaluates the start and end timestamps on every poll and sets the status to `active` directly — your dashboard can use a simple `condition: state` check rather than comparing timestamps in a template.
 
 ### Disabled by default
 
@@ -131,9 +134,6 @@ The following sensors exist but are disabled by default. Enable them via **Setti
 | T93 Peak Cost | T93 peak tariff cost (AUD) | T93 time-of-use accounts |
 | T93 Off-Peak Usage | T93 off-peak tariff consumption (kWh) | T93 time-of-use accounts |
 | T93 Off-Peak Cost | T93 off-peak tariff cost (AUD) | T93 time-of-use accounts |
-| Bill Due Date | Date the current bill is due | All accounts |
-| Overdue Amount | Amount currently overdue | All accounts |
-| Unpaid Bills | Count of unpaid bills | All accounts |
 | Tariff Period End | When the current tariff contract period ends | T93 accounts |
 | Unread Notifications | Number of unread Aurora+ notifications | All accounts |
 | Direct Debit | Whether a direct debit arrangement is active (`active`/`inactive`) | All accounts |
@@ -145,7 +145,7 @@ The following sensors exist but are disabled by default. Enable them via **Setti
 
 The integration injects hourly statistics into the HA recorder, which can be used directly in the **Energy Dashboard**.
 
-On first run it will backfill up to 9 days of historical data. After that it injects each new day's records once they become available from Aurora.
+On first run it will backfill up to 7 days of historical hourly data. After that it injects each new completed day's records once they become available from Aurora (typically 8–9am AEST). The integration also attempts to fetch today's in-progress hourly data on every poll — if the API returns it, the current day's bars will update hourly throughout the day.
 
 To add to the Energy Dashboard:
 1. Go to **Settings → Dashboards → Energy**
@@ -176,7 +176,8 @@ The following additional statistics are available for use in custom dashboard ca
 |-----------|-----------------|-------|
 | Billing data | Every hour | Balance, amount owed, etc. update immediately |
 | Usage data | Every hour | Reflects the previous day; Aurora releases meter data around 8–9am AEST each morning |
-| Energy Dashboard stats | Once per day | Injected automatically when daily data becomes available |
+| Energy Dashboard stats (historical) | Once per day | Hourly records injected once per completed day; 7-day backfill on first run |
+| Energy Dashboard stats (today) | Every hour | Today's partial hourly data re-injected each poll if the API returns it |
 | Billing period totals | Every hour | Running kWh/cost totals for the current billing cycle |
 | Power Hours (upcoming) | Every hour | Active event, timeslot, and selection deadline |
 | Power Hours (total savings) | Once per day | Recalculated from full event history once daily |

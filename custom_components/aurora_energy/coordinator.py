@@ -197,6 +197,8 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._nmi: Optional[str] = None
         self._last_powerhour_all_date: Optional[datetime.date] = None
         self._powerhour_savings_cache: Optional[float] = None
+        self._today_base_sums: dict[str, float] = {}
+        self._today_base_date: Optional[datetime.date] = None
 
     # ------------------------------------------------------------------
     # Core update method
@@ -265,7 +267,13 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # Inject statistics: backfill all available days on first run
         if not self._injected_dates:
-            await self._backfill_history()
+            backfill_sums = await self._backfill_history()
+            # Seed today's base from end of backfill chain to avoid a recorder-read
+            # race condition before the freshly submitted rows have been committed.
+            _tz = zoneinfo.ZoneInfo(TZ_HOBART)
+            if self._today_base_date != dt_util.now(_tz).date() and backfill_sums:
+                self._today_base_sums = backfill_sums
+                self._today_base_date = dt_util.now(_tz).date()
 
         # Inject the fetched day's records if not already done
         date_key = parsed.get("start_date")
@@ -273,6 +281,9 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             records = parsed.get("metered_records", [])
             if self._has_real_kwh_data(records):
                 await self._inject_statistics(records, date_key)
+
+        # Fetch today's partial data and inject it on every poll
+        await self._fetch_and_inject_today(_nmi)
 
         return parsed
 
@@ -415,8 +426,12 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 return True
         return False
 
-    async def _backfill_history(self) -> None:
-        """Fetch and inject statistics for the last BACKFILL_DAYS days."""
+    async def _backfill_history(self) -> dict[str, float]:
+        """Fetch and inject statistics for the last BACKFILL_DAYS days.
+
+        Returns the final cumulative sums after all days are processed so the
+        caller can seed today's base sums without a separate recorder read.
+        """
         _LOGGER.info("Aurora+: starting historical data backfill (%d days)", BACKFILL_DAYS)
         # Carry running sums across days in memory so we don't depend on
         # async_add_external_statistics committing before the next read.
@@ -433,6 +448,7 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 _LOGGER.warning(
                     "Aurora+: could not backfill index %d: %s", idx, err
                 )
+        return sums
 
     async def _get_last_sums(self) -> dict[str, float]:
         """Retrieve the last cumulative sum for each statistic from the recorder.
@@ -542,6 +558,112 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         _LOGGER.debug("Aurora+: injected statistics for %s", date_key)
         return sums
+
+    async def _fetch_and_inject_today(self, nmi: Optional[str]) -> None:
+        """Attempt to fetch today's partial data via index=0 and inject it.
+
+        index=0 is undocumented — may return an error or yesterday's date.
+        All failures are silent at DEBUG level so they don't disrupt the main update.
+        """
+        _tz = zoneinfo.ZoneInfo(TZ_HOBART)
+        today_str = dt_util.now(_tz).date().isoformat()
+        try:
+            usage = await self.client.async_get_usage(timespan="day", index=0, nmi=nmi)
+        except Exception as err:
+            _LOGGER.debug("Aurora+: today's data (index=0) unavailable: %s", err)
+            return
+
+        date_key = usage.get("StartDate")
+        records = usage.get("MeteredUsageRecords", [])
+        if not date_key or date_key[:10] != today_str:
+            _LOGGER.debug(
+                "Aurora+: index=0 returned date %s, not today (%s), skipping",
+                date_key,
+                today_str,
+            )
+            return
+        if not self._has_real_kwh_data(records):
+            return
+
+        await self._inject_today_statistics(records, date_key)
+
+    async def _inject_today_statistics(
+        self,
+        records: list[dict[str, Any]],
+        date_key: str,
+    ) -> None:
+        """Inject today's partial hourly records using a stable midnight base sum.
+
+        Re-injecting the same start times via async_add_external_statistics replaces
+        existing rows — so calling this on every poll is safe and keeps cumulative
+        sums consistent. Unlike _inject_statistics, this method intentionally does
+        NOT add date_key to _injected_dates so today is always re-injectable.
+        """
+        _tz = zoneinfo.ZoneInfo(TZ_HOBART)
+        today = dt_util.now(_tz).date()
+
+        # Refresh base sums once per calendar day (or on first call after restart)
+        if self._today_base_date != today:
+            self._today_base_sums = await self._get_last_sums()
+            self._today_base_date = today
+            _LOGGER.debug("Aurora+: captured today's base sums for %s", today)
+
+        sums = dict(self._today_base_sums)  # mutable copy — never mutate the cached base
+        stats: dict[str, list[StatisticData]] = {k: [] for k in sums}
+
+        hourly = [r for r in records if r.get("TimeMeasureUnit") == "Hour"]
+        if not hourly:
+            return
+
+        for record in sorted(hourly, key=lambda r: r.get("StartTime", "")):
+            start_str = record.get("StartTime")
+            if not start_str:
+                continue
+            start_dt = dt_util.parse_datetime(start_str)
+            if start_dt is None:
+                continue
+            start_dt = dt_util.as_utc(start_dt)
+
+            kwh_by_tariff: dict[str, Any] = record.get("KilowattHourUsage") or {}
+            dollar_by_tariff: dict[str, Any] = record.get("DollarValueUsage") or {}
+
+            t41_kwh        = float(kwh_by_tariff.get(TARIFF_T41)        or 0.0)
+            t31_kwh        = float(kwh_by_tariff.get(TARIFF_T31)        or 0.0)
+            t93peak_kwh    = float(kwh_by_tariff.get(TARIFF_T93PEAK)    or 0.0)
+            t93offpeak_kwh = float(kwh_by_tariff.get(TARIFF_T93OFFPEAK) or 0.0)
+            solar_kwh      = abs(float(kwh_by_tariff.get(TARIFF_T140)   or 0.0))
+            solar_dollars  = abs(float(dollar_by_tariff.get(TARIFF_T140) or 0.0))
+            total_kwh = float(sum(
+                float(v or 0.0)
+                for k, v in kwh_by_tariff.items()
+                if k not in (TARIFF_T140, TARIFF_TOTAL)
+            ))
+            total_dollars = float(sum(
+                float(v or 0.0)
+                for k, v in dollar_by_tariff.items()
+                if k not in (TARIFF_T140, TARIFF_OTHER, TARIFF_TOTAL)
+            ))
+
+            for stat_id, period_val in [
+                (STAT_ID_TOTAL_KWH,      total_kwh),
+                (STAT_ID_T41_KWH,        t41_kwh),
+                (STAT_ID_T31_KWH,        t31_kwh),
+                (STAT_ID_T93PEAK_KWH,    t93peak_kwh),
+                (STAT_ID_T93OFFPEAK_KWH, t93offpeak_kwh),
+                (STAT_ID_SOLAR_KWH,      solar_kwh),
+                (STAT_ID_TOTAL_DOLLARS,  total_dollars),
+                (STAT_ID_SOLAR_DOLLARS,  solar_dollars),
+            ]:
+                sums[stat_id] += period_val
+                stats[stat_id].append(
+                    StatisticData(start=start_dt, state=period_val, sum=sums[stat_id])
+                )
+
+        for stat_id, data_points in stats.items():
+            if data_points:
+                async_add_external_statistics(self.hass, _STAT_METADATA[stat_id], data_points)
+
+        _LOGGER.debug("Aurora+: injected %d intraday hours for %s", len(hourly), date_key)
 
     def _calculate_total_savings(self, events: list[dict]) -> Optional[float]:
         """Sum abs(Customer.Cost) for all completed Power Hour events.
