@@ -49,7 +49,9 @@ from .const import (
     SENSOR_UNREAD_NOTIFS,
     STAT_ID_SOLAR_DOLLARS,
     STAT_ID_SOLAR_KWH,
+    STAT_ID_T31_DOLLARS,
     STAT_ID_T31_KWH,
+    STAT_ID_T41_DOLLARS,
     STAT_ID_T41_KWH,
     STAT_ID_T93OFFPEAK_KWH,
     STAT_ID_T93PEAK_KWH,
@@ -142,6 +144,22 @@ _STAT_METADATA: dict[str, StatisticMetaData] = {
         name="Aurora Total Cost",
         source=DOMAIN,
         statistic_id=STAT_ID_TOTAL_DOLLARS,
+        unit_of_measurement="AUD",
+    ),
+    STAT_ID_T41_DOLLARS: StatisticMetaData(
+        has_mean=False,
+        has_sum=True,
+        name="Aurora T41 Heating Cost",
+        source=DOMAIN,
+        statistic_id=STAT_ID_T41_DOLLARS,
+        unit_of_measurement="AUD",
+    ),
+    STAT_ID_T31_DOLLARS: StatisticMetaData(
+        has_mean=False,
+        has_sum=True,
+        name="Aurora T31 General Cost",
+        source=DOMAIN,
+        statistic_id=STAT_ID_T31_DOLLARS,
         unit_of_measurement="AUD",
     ),
     STAT_ID_SOLAR_DOLLARS: StatisticMetaData(
@@ -530,7 +548,9 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             t93peak_kwh    = float(kwh_by_tariff.get(TARIFF_T93PEAK)    or 0.0)
             t93offpeak_kwh = float(kwh_by_tariff.get(TARIFF_T93OFFPEAK) or 0.0)
             solar_kwh      = abs(float(kwh_by_tariff.get(TARIFF_T140) or 0.0))
-            solar_dollars = abs(float(dollar_by_tariff.get(TARIFF_T140) or 0.0))
+            t41_dollars    = float(dollar_by_tariff.get(TARIFF_T41) or 0.0)
+            t31_dollars    = float(dollar_by_tariff.get(TARIFF_T31) or 0.0)
+            solar_dollars  = abs(float(dollar_by_tariff.get(TARIFF_T140) or 0.0))
             # Total consumption = all kWh except solar (T140)
             total_kwh = float(
                 sum(
@@ -556,6 +576,8 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 (STAT_ID_T93OFFPEAK_KWH, t93offpeak_kwh),
                 (STAT_ID_SOLAR_KWH,      solar_kwh),
                 (STAT_ID_TOTAL_DOLLARS,  total_dollars),
+                (STAT_ID_T41_DOLLARS,    t41_dollars),
+                (STAT_ID_T31_DOLLARS,    t31_dollars),
                 (STAT_ID_SOLAR_DOLLARS,  solar_dollars),
             ]:
                 sums[stat_id] += period_val
@@ -586,7 +608,7 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         All failures are silent at DEBUG level so they don't disrupt the main update.
         """
         _tz = zoneinfo.ZoneInfo(TZ_HOBART)
-        today_str = dt_util.now(_tz).date().isoformat()
+        today = dt_util.now(_tz).date()
         try:
             usage = await self.client.async_get_usage(timespan="day", index=0, nmi=nmi)
         except Exception as err:
@@ -595,11 +617,23 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         date_key = usage.get("StartDate")
         records = usage.get("MeteredUsageRecords", [])
-        if not date_key or date_key[:10] != today_str:
+
+        # StartDate is UTC and represents the start of a Hobart-local day.
+        # In AEST (UTC+10) the Hobart day boundary is 14:00 UTC the previous
+        # calendar day; in AEDT (UTC+11) it is 13:00 UTC. Comparing the raw
+        # YYYY-MM-DD prefix to today's Hobart date therefore always fails
+        # during Hobart daylight hours — convert to Hobart-local first.
+        start_dt = dt_util.parse_datetime(date_key) if date_key else None
+        returned_date = (
+            dt_util.as_utc(start_dt).astimezone(_tz).date()
+            if start_dt is not None
+            else None
+        )
+        if returned_date != today:
             _LOGGER.debug(
-                "Aurora+: index=0 returned date %s, not today (%s), skipping",
-                date_key,
-                today_str,
+                "Aurora+: index=0 returned Hobart date %s, not today (%s), skipping",
+                returned_date,
+                today,
             )
             return
         if not self._has_real_kwh_data(records):
@@ -656,6 +690,8 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             t93peak_kwh    = float(kwh_by_tariff.get(TARIFF_T93PEAK)    or 0.0)
             t93offpeak_kwh = float(kwh_by_tariff.get(TARIFF_T93OFFPEAK) or 0.0)
             solar_kwh      = abs(float(kwh_by_tariff.get(TARIFF_T140)   or 0.0))
+            t41_dollars    = float(dollar_by_tariff.get(TARIFF_T41)     or 0.0)
+            t31_dollars    = float(dollar_by_tariff.get(TARIFF_T31)     or 0.0)
             solar_dollars  = abs(float(dollar_by_tariff.get(TARIFF_T140) or 0.0))
             total_kwh = float(sum(
                 float(v or 0.0)
@@ -676,6 +712,8 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 (STAT_ID_T93OFFPEAK_KWH, t93offpeak_kwh),
                 (STAT_ID_SOLAR_KWH,      solar_kwh),
                 (STAT_ID_TOTAL_DOLLARS,  total_dollars),
+                (STAT_ID_T41_DOLLARS,    t41_dollars),
+                (STAT_ID_T31_DOLLARS,    t31_dollars),
                 (STAT_ID_SOLAR_DOLLARS,  solar_dollars),
             ]:
                 sums[stat_id] += period_val
