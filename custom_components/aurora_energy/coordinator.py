@@ -210,6 +210,13 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if not self._store_loaded:
             stored = await self._store.async_load() or {}
             self._injected_dates = set(stored.get("injected_dates", []))
+            self._today_base_sums = dict(stored.get("today_base_sums") or {})
+            date_str = stored.get("today_base_date")
+            if date_str:
+                try:
+                    self._today_base_date = datetime.date.fromisoformat(date_str)
+                except (TypeError, ValueError):
+                    self._today_base_date = None
             self._store_loaded = True
 
         try:
@@ -274,6 +281,7 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if self._today_base_date != dt_util.now(_tz).date() and backfill_sums:
                 self._today_base_sums = backfill_sums
                 self._today_base_date = dt_util.now(_tz).date()
+                await self._persist_state()
 
         # Inject the fetched day's records if not already done
         date_key = parsed.get("start_date")
@@ -450,6 +458,20 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 )
         return sums
 
+    async def _persist_state(self) -> None:
+        """Persist backfill state and today's intraday baseline to storage."""
+        await self._store.async_save(
+            {
+                "injected_dates": list(self._injected_dates),
+                "today_base_sums": dict(self._today_base_sums),
+                "today_base_date": (
+                    self._today_base_date.isoformat()
+                    if self._today_base_date
+                    else None
+                ),
+            }
+        )
+
     async def _get_last_sums(self) -> dict[str, float]:
         """Retrieve the last cumulative sum for each statistic from the recorder.
 
@@ -553,9 +575,7 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 )
 
         self._injected_dates.add(date_key)
-        await self._store.async_save(
-            {"injected_dates": list(self._injected_dates)}
-        )
+        await self._persist_state()
         _LOGGER.debug("Aurora+: injected statistics for %s", date_key)
         return sums
 
@@ -602,10 +622,14 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         _tz = zoneinfo.ZoneInfo(TZ_HOBART)
         today = dt_util.now(_tz).date()
 
-        # Refresh base sums once per calendar day (or on first call after restart)
+        # Refresh base sums once per calendar day. The base is persisted, so a
+        # mid-day restart restores the original midnight baseline rather than
+        # re-deriving it from the recorder (which already contains today's
+        # partial rows and would inflate the cumulative sum on every restart).
         if self._today_base_date != today:
             self._today_base_sums = await self._get_last_sums()
             self._today_base_date = today
+            await self._persist_state()
             _LOGGER.debug("Aurora+: captured today's base sums for %s", today)
 
         sums = dict(self._today_base_sums)  # mutable copy — never mutate the cached base
