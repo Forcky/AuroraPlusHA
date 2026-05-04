@@ -12,7 +12,11 @@ import zoneinfo
 from typing import Any, Optional
 
 from homeassistant.components.recorder import get_instance
-from homeassistant.components.recorder.models import StatisticData, StatisticMetaData
+from homeassistant.components.recorder.models import (
+    StatisticData,
+    StatisticMeanType,
+    StatisticMetaData,
+)
 from homeassistant.components.recorder.statistics import (
     async_add_external_statistics,
     get_last_statistics,
@@ -105,68 +109,76 @@ def _parse_hobart_naive(
 # source must equal DOMAIN for external statistics.
 _STAT_METADATA: dict[str, StatisticMetaData] = {
     STAT_ID_TOTAL_KWH: StatisticMetaData(
-        has_mean=False,
+        mean_type=StatisticMeanType.NONE,
         has_sum=True,
         name="Aurora Total Energy",
         source=DOMAIN,
         statistic_id=STAT_ID_TOTAL_KWH,
         unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        unit_class="energy",
     ),
     STAT_ID_T41_KWH: StatisticMetaData(
-        has_mean=False,
+        mean_type=StatisticMeanType.NONE,
         has_sum=True,
         name="Aurora T41 Heating Energy",
         source=DOMAIN,
         statistic_id=STAT_ID_T41_KWH,
         unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        unit_class="energy",
     ),
     STAT_ID_T31_KWH: StatisticMetaData(
-        has_mean=False,
+        mean_type=StatisticMeanType.NONE,
         has_sum=True,
         name="Aurora T31 General Energy",
         source=DOMAIN,
         statistic_id=STAT_ID_T31_KWH,
         unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        unit_class="energy",
     ),
     STAT_ID_SOLAR_KWH: StatisticMetaData(
-        has_mean=False,
+        mean_type=StatisticMeanType.NONE,
         has_sum=True,
         name="Aurora Solar Feed-in Energy",
         source=DOMAIN,
         statistic_id=STAT_ID_SOLAR_KWH,
         unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        unit_class="energy",
     ),
     STAT_ID_TOTAL_DOLLARS: StatisticMetaData(
-        has_mean=False,
+        mean_type=StatisticMeanType.NONE,
         has_sum=True,
         name="Aurora Total Cost",
         source=DOMAIN,
         statistic_id=STAT_ID_TOTAL_DOLLARS,
         unit_of_measurement="AUD",
+        unit_class=None,
     ),
     STAT_ID_SOLAR_DOLLARS: StatisticMetaData(
-        has_mean=False,
+        mean_type=StatisticMeanType.NONE,
         has_sum=True,
         name="Aurora Solar Feed-in Earnings",
         source=DOMAIN,
         statistic_id=STAT_ID_SOLAR_DOLLARS,
         unit_of_measurement="AUD",
+        unit_class=None,
     ),
     STAT_ID_T93PEAK_KWH: StatisticMetaData(
-        has_mean=False,
+        mean_type=StatisticMeanType.NONE,
         has_sum=True,
         name="Aurora T93 Peak Energy",
         source=DOMAIN,
         statistic_id=STAT_ID_T93PEAK_KWH,
         unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        unit_class="energy",
     ),
     STAT_ID_T93OFFPEAK_KWH: StatisticMetaData(
-        has_mean=False,
+        mean_type=StatisticMeanType.NONE,
         has_sum=True,
         name="Aurora T93 Off-Peak Energy",
         source=DOMAIN,
         statistic_id=STAT_ID_T93OFFPEAK_KWH,
         unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        unit_class="energy",
     ),
 }
 
