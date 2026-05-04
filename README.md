@@ -166,7 +166,13 @@ The following additional statistics are available for use in custom dashboard ca
 | `aurora_energy:t31_kwh` | T31 general consumption |
 | `aurora_energy:t41_kwh` | T41 heating consumption |
 | `aurora_energy:total_dollars` | Total energy cost |
+| `aurora_energy:t31_dollars` | T31 general tariff cost |
+| `aurora_energy:t41_dollars` | T41 heating tariff cost |
 | `aurora_energy:solar_feedin_dollars` | Solar feed-in earnings |
+
+> **Note for existing installs:** The `t31_dollars` and `t41_dollars` statistics were added in a recent update. Existing installs will not automatically backfill these new statistics because the backfill guard sees previously injected dates as already processed. To trigger a backfill, delete `.storage/aurora_energy_<entry_id>_backfill` from your HA config directory and reload the integration.
+
+> **HA 2026.11 compatibility:** This integration uses the updated `StatisticMeanType` API required by Home Assistant Core 2026.11. Update to the latest version of this integration before upgrading to HA 2026.11 or later.
 
 ---
 

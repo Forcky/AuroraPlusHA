@@ -544,6 +544,8 @@ Aurora Energy typically makes the previous day's meter data available at approxi
 
 Querying with `index=-1` returns the most recent available completed period. `index=-9` is the oldest available (approximately 9 days back). `index=0` is undocumented — it may return today's partial in-progress data (hours completed so far), but behaviour varies: it may return yesterday's data or an error. Do not rely on it being supported.
 
+**Important:** When checking whether an `index=0` response is for today, do not compare the raw `YYYY-MM-DD` prefix of `StartDate` to today's date. `StartDate` is UTC and represents the start of a Hobart-local calendar day. In AEST (UTC+10) the day boundary falls at 14:00 UTC the previous calendar day; in AEDT (UTC+11) it is 13:00 UTC. Comparing the raw prefix will therefore fail during Hobart business hours. Always parse the UTC timestamp and convert it to `Australia/Hobart` local time before comparing to today's local date.
+
 ---
 
 ## Known quirks
@@ -561,6 +563,7 @@ Querying with `index=-1` returns the most recent available completed period. `in
 | `User-Agent` header | The API expects `User-Agent: python/auroraplus` — other values may work but this is the tested value. |
 | `KilowattHourUsageAEST` | This field exists on all records but has been observed as always `null`. Its purpose is unknown. |
 | Dollar data split | `DollarValueUsage` is only populated on the Day-level record, not on individual Hour records. kWh data is only on Hour records. |
+| `index=0` date is UTC, not local | `StartDate` on an `index=0` response is a UTC timestamp representing midnight Hobart-local time. Comparing the raw `YYYY-MM-DD` prefix to today's date will fail during Hobart business hours (before ~14:00–15:00 UTC). Convert to `Australia/Hobart` local time before comparing. |
 
 ---
 
