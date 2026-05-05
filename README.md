@@ -10,7 +10,7 @@ A custom Home Assistant integration that pulls your Aurora Energy Tasmania billi
 - Real-time T93 tariff period sensor (`peak` / `off_peak`), DST-correct
 - Power Hours demand-response program sensors (status, timeslot, savings)
 - Billing period totals (cumulative kWh and cost for the current billing cycle)
-- Historical statistics for the Energy Dashboard (backfills 7 days on first run; today's partial hourly data updated each poll)
+- Historical statistics for the Energy Dashboard (backfills up to 7 days on every HA restart to cover gaps; today's partial hourly data updated each poll)
 - Automatic hourly refresh
 
 ---
@@ -145,7 +145,7 @@ The following sensors exist but are disabled by default. Enable them via **Setti
 
 The integration injects hourly statistics into the HA recorder, which can be used directly in the **Energy Dashboard**.
 
-On first run it will backfill up to 7 days of historical hourly data. After that it injects each new completed day's records once they become available from Aurora (typically 8–9am AEST). The integration also attempts to fetch today's in-progress hourly data on every poll — if the API returns it, the current day's bars will update hourly throughout the day.
+On every HA startup it checks the last 7 days and injects any that are missing from the recorder — this means gaps caused by downtime or broken authentication are automatically recovered after a restart. Each new completed day's records are injected once they become available from Aurora (typically 8–9am AEST). The integration also attempts to fetch today's in-progress hourly data on every poll — if the API returns it, the current day's bars will update hourly throughout the day.
 
 To add to the Energy Dashboard:
 1. Go to **Settings → Dashboards → Energy**
@@ -182,7 +182,7 @@ The following additional statistics are available for use in custom dashboard ca
 |-----------|-----------------|-------|
 | Billing data | Every hour | Balance, amount owed, etc. update immediately |
 | Usage data | Every hour | Reflects the previous day; Aurora releases meter data around 8–9am AEST each morning |
-| Energy Dashboard stats (historical) | Once per day | Hourly records injected once per completed day; 7-day backfill on first run |
+| Energy Dashboard stats (historical) | Once per day | Hourly records injected once per completed day; up to 7-day backfill on every HA restart |
 | Energy Dashboard stats (today) | Every hour | Today's partial hourly data re-injected each poll if the API returns it |
 | Billing period totals | Every hour | Running kWh/cost totals for the current billing cycle |
 | Power Hours (upcoming) | Every hour | Active event, timeslot, and selection deadline |
@@ -194,7 +194,9 @@ The following additional statistics are available for use in custom dashboard ca
 
 The id_token is exchanged for a longer-lived access and refresh token pair on first login. Under normal operation you will not need to re-authenticate.
 
-If your session fully expires (HA will show a notification), repeat the id_token steps above and enter the new token when prompted.
+If your session fully expires (HA will show a notification), repeat the id_token steps above and enter the new token when prompted. Once re-authentication succeeds, the new tokens are immediately saved and the integration reloads — you should not be prompted again.
+
+After re-authenticating, restart Home Assistant to trigger the automatic backfill and recover any Energy Dashboard data that was missed while authentication was broken.
 
 ---
 
@@ -233,6 +235,12 @@ The sensor always computes against fixed AEST (UTC+10) regardless of local Hobar
 
 ### "Invalid token" error during setup
 The id_token expired before you submitted it. Grab a fresh token from the Aurora+ portal and submit it within 30 seconds of copying it.
+
+### Re-authentication prompt reappears immediately after submitting a new token
+Ensure you are running the latest version of this integration. Earlier versions had a bug where the new tokens were not saved after re-auth, causing the integration to immediately fail again with the old expired credentials on reload.
+
+### Energy Dashboard is missing data after a period of downtime or broken authentication
+The integration backfills up to 7 days of missing data automatically on every HA restart. After resolving the underlying issue (e.g. re-authenticating), **restart Home Assistant** to trigger the backfill. Data older than 7 days cannot be recovered as the Aurora+ API does not expose it.
 
 ### Sensors show "Unknown"
 - **Estimated Balance** and **Usage Days Remaining** may be `null` for some account types — this is normal behaviour and not an error.
