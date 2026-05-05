@@ -165,12 +165,16 @@ The following additional statistics are available for use in custom dashboard ca
 | `aurora_energy:t93offpeak_kwh` | T93 off-peak consumption |
 | `aurora_energy:t31_kwh` | T31 general consumption |
 | `aurora_energy:t41_kwh` | T41 heating consumption |
-| `aurora_energy:total_dollars` | Total energy cost |
+| `aurora_energy:total_dollars` | Total energy cost (excludes daily supply charge) |
 | `aurora_energy:t31_dollars` | T31 general tariff cost |
 | `aurora_energy:t41_dollars` | T41 heating tariff cost |
+| `aurora_energy:t93peak_dollars` | T93 peak tariff cost |
+| `aurora_energy:t93offpeak_dollars` | T93 off-peak tariff cost |
 | `aurora_energy:solar_feedin_dollars` | Solar feed-in earnings |
 
-> **Note for existing installs:** The `t31_dollars` and `t41_dollars` statistics were added in a recent update. Existing installs will not automatically backfill these new statistics because the backfill guard sees previously injected dates as already processed. To trigger a backfill, delete `.storage/aurora_energy_<entry_id>_backfill` from your HA config directory and reload the integration.
+Aurora's API only exposes dollar values at the day level, so per-hour cost statistics are produced by distributing each tariff's day total across hours weighted by that hour's share of the day's kWh for the same tariff.
+
+> **Note for existing installs:** The per-tariff `*_dollars` statistics (`t31_dollars`, `t41_dollars`, `t93peak_dollars`, `t93offpeak_dollars`) and the corrected `total_dollars` / `solar_feedin_dollars` distribution were introduced in recent updates. Existing installs will not automatically backfill or correct these because the backfill guard sees previously injected dates as already processed. To trigger a fresh backfill, delete `.storage/aurora_energy_<entry_id>_backfill` from your HA config directory and restart Home Assistant.
 
 > **HA 2026.11 compatibility:** This integration uses the updated `StatisticMeanType` API required by Home Assistant Core 2026.11. Update to the latest version of this integration before upgrading to HA 2026.11 or later.
 
