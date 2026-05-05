@@ -13,8 +13,11 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import AuroraApiClient, AuthenticationError
 from .const import (
+    CONF_ACCESS_TOKEN,
     CONF_CUSTOMER_ID,
     CONF_ID_TOKEN,
+    CONF_REFRESH_COOKIE,
+    CONF_REFRESH_TOKEN,
     CONF_SERVICE_AGREEMENT_ID,
     DOMAIN,
 )
@@ -28,8 +31,10 @@ STEP_USER_SCHEMA = vol.Schema(
 )
 
 
-async def _validate_token(hass: HomeAssistant, id_token: str) -> tuple[str, str]:
-    """Try to log in and return (service_agreement_id, customer_id)."""
+async def _validate_token(
+    hass: HomeAssistant, id_token: str
+) -> tuple[str, str, str | None, str | None, str | None]:
+    """Log in and return (service_agreement_id, customer_id, access_token, refresh_token, refresh_cookie)."""
     session = async_get_clientsession(hass)
     client = AuroraApiClient(
         session=session,
@@ -39,7 +44,8 @@ async def _validate_token(hass: HomeAssistant, id_token: str) -> tuple[str, str]
         hass=hass,
         entry=None,
     )
-    return await client.async_validate_and_login(id_token)
+    sa_id, customer_id = await client.async_validate_and_login(id_token)
+    return sa_id, customer_id, client._access_token, client._refresh_token, client._refresh_cookie
 
 
 class AuroraConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -55,7 +61,7 @@ class AuroraConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             try:
-                service_agreement_id, customer_id = await _validate_token(
+                service_agreement_id, customer_id, access_token, refresh_token, refresh_cookie = await _validate_token(
                     self.hass, user_input[CONF_ID_TOKEN]
                 )
             except AuthenticationError:
@@ -72,6 +78,9 @@ class AuroraConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         CONF_ID_TOKEN: user_input[CONF_ID_TOKEN],
                         CONF_SERVICE_AGREEMENT_ID: service_agreement_id,
                         CONF_CUSTOMER_ID: customer_id,
+                        CONF_ACCESS_TOKEN: access_token,
+                        CONF_REFRESH_TOKEN: refresh_token,
+                        CONF_REFRESH_COOKIE: refresh_cookie,
                     },
                 )
 
@@ -98,7 +107,7 @@ class AuroraConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             try:
-                service_agreement_id, customer_id = await _validate_token(
+                service_agreement_id, customer_id, access_token, refresh_token, refresh_cookie = await _validate_token(
                     self.hass, user_input[CONF_ID_TOKEN]
                 )
             except AuthenticationError:
@@ -114,6 +123,9 @@ class AuroraConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         CONF_ID_TOKEN: user_input[CONF_ID_TOKEN],
                         CONF_SERVICE_AGREEMENT_ID: service_agreement_id,
                         CONF_CUSTOMER_ID: customer_id,
+                        CONF_ACCESS_TOKEN: access_token,
+                        CONF_REFRESH_TOKEN: refresh_token,
+                        CONF_REFRESH_COOKIE: refresh_cookie,
                     },
                 )
                 await self.hass.config_entries.async_reload(
