@@ -20,6 +20,7 @@ from homeassistant.components.recorder.models import (
 from homeassistant.components.recorder.statistics import (
     async_add_external_statistics,
     get_last_statistics,
+    statistics_during_period,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfEnergy
@@ -303,12 +304,12 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         parsed[SENSOR_PH_TOTAL_SAVINGS] = self._powerhour_savings_cache
         self._nmi = parsed.get("nmi")
 
-        # Backfill on every startup (once per HA run, not just first-ever run).
-        # _injected_dates guards against re-injecting already-processed dates, so
-        # running this on every restart safely fills any gap caused by downtime or
-        # broken authentication without duplicating existing data.
+        # Reconcile history once per HA startup. Re-injects the last
+        # BACKFILL_DAYS days in chronological order starting from the recorder
+        # sum just before the window, so any gap (downtime, broken auth) and
+        # any corrupted cumulative sums are repaired automatically.
         if not self._backfill_done:
-            backfill_sums = await self._backfill_history()
+            backfill_sums = await self._reconcile_history()
             self._backfill_done = True
             _tz = zoneinfo.ZoneInfo(TZ_HOBART)
             if self._today_base_date != dt_util.now(_tz).date() and backfill_sums:
@@ -467,28 +468,84 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 return True
         return False
 
-    async def _backfill_history(self) -> dict[str, float]:
-        """Fetch and inject statistics for the last BACKFILL_DAYS days.
+    async def _get_sums_before(self, dt: datetime.datetime) -> dict[str, float]:
+        """Return the recorder cumulative sums for each statistic just before dt.
 
-        Returns the final cumulative sums after all days are processed so the
-        caller can seed today's base sums without a separate recorder read.
+        Queries the 48-hour window ending at dt so that the last committed
+        hourly row before dt is found even across DST transitions.
+        Returns 0.0 for any statistic with no recorded data before dt
+        (e.g. first-ever run).
         """
-        _LOGGER.info("Aurora+: starting historical data backfill (%d days)", BACKFILL_DAYS)
-        # Carry running sums across days in memory so we don't depend on
-        # async_add_external_statistics committing before the next read.
-        sums = await self._get_last_sums()
+        start_dt = dt - datetime.timedelta(hours=48)
+        result: dict = await get_instance(self.hass).async_add_executor_job(
+            statistics_during_period,
+            self.hass,
+            start_dt,
+            dt,
+            set(_STAT_METADATA.keys()),
+            "hour",
+            None,
+            {"sum"},
+        )
+        sums: dict[str, float] = {}
+        for stat_id in _STAT_METADATA:
+            entries = result.get(stat_id) or []
+            if entries:
+                last = max(entries, key=lambda e: e["start"])
+                sums[stat_id] = float(last.get("sum") or 0.0)
+            else:
+                sums[stat_id] = 0.0
+        return sums
+
+    async def _reconcile_history(self) -> dict[str, float]:
+        """Fetch and re-inject the last BACKFILL_DAYS days in chronological order.
+
+        Unlike the old backfill, this always seeds sums from the recorder value
+        just before the window rather than from _get_last_sums() (which returns
+        the highest current cumulative and causes inflated sums when later days
+        are already in the recorder). Re-injecting all available days in sequence
+        from the correct baseline repairs any gap and any corrupted cumulative
+        sums caused by out-of-order injection.
+
+        Returns the final cumulative sums after all days are processed.
+        """
+        _LOGGER.info("Aurora+: reconciling last %d days of history", BACKFILL_DAYS)
+
+        # Collect all available days that have real kWh data
+        available: list[tuple[str, list[dict]]] = []
         for idx in range(-BACKFILL_DAYS, 0):
             try:
-                usage = await self.client.async_get_usage(timespan="day", index=idx, nmi=getattr(self, "_nmi", None))
+                usage = await self.client.async_get_usage(
+                    timespan="day", index=idx, nmi=getattr(self, "_nmi", None)
+                )
                 date_key = usage.get("StartDate")
                 records = usage.get("MeteredUsageRecords", [])
-                # NoDataFlag is unreliable — check for actual kWh data in hourly records instead
-                if date_key and date_key not in self._injected_dates and self._has_real_kwh_data(records):
-                    sums = await self._inject_statistics(records, date_key, sums)
+                if date_key and self._has_real_kwh_data(records):
+                    available.append((date_key, records))
             except Exception as err:
-                _LOGGER.warning(
-                    "Aurora+: could not backfill index %d: %s", idx, err
-                )
+                _LOGGER.warning("Aurora+: could not fetch history index %d: %s", idx, err)
+
+        if not available:
+            return await self._get_last_sums()
+
+        # Sort chronologically and seed sums from the recorder just before the window.
+        # This is correct for all cases:
+        #   first-ever run  → no prior data → sums = 0 → builds up correctly
+        #   normal startup  → sum from day before the window → correct continuation
+        #   gap recovery    → sum from before the gap → gap days injected correctly;
+        #                      subsequent days re-injected with repaired cumulative sums
+        available.sort(key=lambda x: x[0])
+        earliest_dt = dt_util.parse_datetime(available[0][0])
+        if earliest_dt is None:
+            return await self._get_last_sums()
+        sums = await self._get_sums_before(dt_util.as_utc(earliest_dt))
+
+        # Re-inject all available days. Discard each from _injected_dates first
+        # so _inject_statistics processes it regardless of prior state.
+        for date_key, records in available:
+            self._injected_dates.discard(date_key)
+            sums = await self._inject_statistics(records, date_key, sums)
+
         return sums
 
     async def _persist_state(self) -> None:
