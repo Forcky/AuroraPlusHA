@@ -224,6 +224,7 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         self._injected_dates: set[str] = set()
         self._store_loaded = False
+        self._backfill_done = False
         self._nmi: Optional[str] = None
         self._last_powerhour_all_date: Optional[datetime.date] = None
         self._powerhour_savings_cache: Optional[float] = None
@@ -302,11 +303,13 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         parsed[SENSOR_PH_TOTAL_SAVINGS] = self._powerhour_savings_cache
         self._nmi = parsed.get("nmi")
 
-        # Inject statistics: backfill all available days on first run
-        if not self._injected_dates:
+        # Backfill on every startup (once per HA run, not just first-ever run).
+        # _injected_dates guards against re-injecting already-processed dates, so
+        # running this on every restart safely fills any gap caused by downtime or
+        # broken authentication without duplicating existing data.
+        if not self._backfill_done:
             backfill_sums = await self._backfill_history()
-            # Seed today's base from end of backfill chain to avoid a recorder-read
-            # race condition before the freshly submitted rows have been committed.
+            self._backfill_done = True
             _tz = zoneinfo.ZoneInfo(TZ_HOBART)
             if self._today_base_date != dt_util.now(_tz).date() and backfill_sums:
                 self._today_base_sums = backfill_sums
