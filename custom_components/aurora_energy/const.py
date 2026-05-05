@@ -91,8 +91,10 @@ STAT_ID_TOTAL_DOLLARS = f"{DOMAIN}:total_dollars"
 STAT_ID_T41_DOLLARS = f"{DOMAIN}:t41_dollars"
 STAT_ID_T31_DOLLARS = f"{DOMAIN}:t31_dollars"
 STAT_ID_SOLAR_DOLLARS = f"{DOMAIN}:solar_feedin_dollars"
-STAT_ID_T93PEAK_KWH    = f"{DOMAIN}:t93peak_kwh"
-STAT_ID_T93OFFPEAK_KWH = f"{DOMAIN}:t93offpeak_kwh"
+STAT_ID_T93PEAK_KWH        = f"{DOMAIN}:t93peak_kwh"
+STAT_ID_T93PEAK_DOLLARS    = f"{DOMAIN}:t93peak_dollars"
+STAT_ID_T93OFFPEAK_KWH     = f"{DOMAIN}:t93offpeak_kwh"
+STAT_ID_T93OFFPEAK_DOLLARS = f"{DOMAIN}:t93offpeak_dollars"
 
 # Number of past days to backfill on first run (API supports up to index -9)
 BACKFILL_DAYS = 7

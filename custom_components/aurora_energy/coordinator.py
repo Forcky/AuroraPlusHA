@@ -58,7 +58,9 @@ from .const import (
     STAT_ID_T31_KWH,
     STAT_ID_T41_DOLLARS,
     STAT_ID_T41_KWH,
+    STAT_ID_T93OFFPEAK_DOLLARS,
     STAT_ID_T93OFFPEAK_KWH,
+    STAT_ID_T93PEAK_DOLLARS,
     STAT_ID_T93PEAK_KWH,
     STAT_ID_TOTAL_DOLLARS,
     STAT_ID_TOTAL_KWH,
@@ -157,20 +159,22 @@ _STAT_METADATA: dict[str, StatisticMetaData] = {
         unit_class=None,
     ),
     STAT_ID_T41_DOLLARS: StatisticMetaData(
-        has_mean=False,
+        mean_type=StatisticMeanType.NONE,
         has_sum=True,
         name="Aurora T41 Heating Cost",
         source=DOMAIN,
         statistic_id=STAT_ID_T41_DOLLARS,
         unit_of_measurement="AUD",
+        unit_class=None,
     ),
     STAT_ID_T31_DOLLARS: StatisticMetaData(
-        has_mean=False,
+        mean_type=StatisticMeanType.NONE,
         has_sum=True,
         name="Aurora T31 General Cost",
         source=DOMAIN,
         statistic_id=STAT_ID_T31_DOLLARS,
         unit_of_measurement="AUD",
+        unit_class=None,
     ),
     STAT_ID_SOLAR_DOLLARS: StatisticMetaData(
         mean_type=StatisticMeanType.NONE,
@@ -199,7 +203,69 @@ _STAT_METADATA: dict[str, StatisticMetaData] = {
         unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         unit_class="energy",
     ),
+    STAT_ID_T93PEAK_DOLLARS: StatisticMetaData(
+        mean_type=StatisticMeanType.NONE,
+        has_sum=True,
+        name="Aurora T93 Peak Cost",
+        source=DOMAIN,
+        statistic_id=STAT_ID_T93PEAK_DOLLARS,
+        unit_of_measurement="AUD",
+        unit_class=None,
+    ),
+    STAT_ID_T93OFFPEAK_DOLLARS: StatisticMetaData(
+        mean_type=StatisticMeanType.NONE,
+        has_sum=True,
+        name="Aurora T93 Off-Peak Cost",
+        source=DOMAIN,
+        statistic_id=STAT_ID_T93OFFPEAK_DOLLARS,
+        unit_of_measurement="AUD",
+        unit_class=None,
+    ),
 }
+
+
+def _distribute_day_dollars_by_kwh(
+    hourly: list[dict[str, Any]],
+    summary_totals: Optional[dict[str, Any]],
+) -> dict[str, dict[str, float]]:
+    """Allocate each tariff's day-level dollar value across hours by kWh share.
+
+    Aurora's MeteredUsageRecords expose per-hour KilowattHourUsage but the
+    matching DollarValueUsage dict is null at the hour level — dollar figures
+    only appear at the day level via SummaryTotals. To produce useful hourly
+    cost statistics we read each tariff's day total and weight it by that
+    hour's share of the day's kWh for the same tariff.
+
+    Returns a dict keyed by the record's StartTime string, mapping to a
+    per-tariff dict of distributed dollar values for that hour. Tariffs
+    absent from summary_totals contribute 0; tariffs with zero day-kWh also
+    contribute 0 (avoids division by zero — any latent dollar value would
+    have nothing to weight against).
+    """
+    day_dollars: dict[str, Any] = {}
+    if summary_totals:
+        day_dollars = summary_totals.get("DollarValueUsage") or {}
+
+    day_kwh: dict[str, float] = {}
+    for record in hourly:
+        kwh = record.get("KilowattHourUsage") or {}
+        for tariff, val in kwh.items():
+            day_kwh[tariff] = day_kwh.get(tariff, 0.0) + float(val or 0.0)
+
+    result: dict[str, dict[str, float]] = {}
+    for record in hourly:
+        start = record.get("StartTime") or ""
+        kwh = record.get("KilowattHourUsage") or {}
+        per_tariff: dict[str, float] = {}
+        for tariff, day_dol in day_dollars.items():
+            day_total = day_kwh.get(tariff, 0.0)
+            hour_val = float(kwh.get(tariff) or 0.0)
+            if day_total != 0.0:
+                per_tariff[tariff] = float(day_dol or 0.0) * (hour_val / day_total)
+            else:
+                per_tariff[tariff] = 0.0
+        result[start] = per_tariff
+    return result
 
 
 class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -304,10 +370,9 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         parsed[SENSOR_PH_TOTAL_SAVINGS] = self._powerhour_savings_cache
         self._nmi = parsed.get("nmi")
 
-        # Reconcile history once per HA startup. Re-injects the last
-        # BACKFILL_DAYS days in chronological order starting from the recorder
-        # sum just before the window, so any gap (downtime, broken auth) and
-        # any corrupted cumulative sums are repaired automatically.
+        # Reconcile history once per HA startup: re-fetches the last BACKFILL_DAYS
+        # days and re-injects any that are missing, starting from the correct
+        # cumulative baseline so the sum is always monotonically increasing.
         if not self._backfill_done:
             backfill_sums = await self._reconcile_history()
             self._backfill_done = True
@@ -322,7 +387,11 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if date_key and date_key not in self._injected_dates:
             records = parsed.get("metered_records", [])
             if self._has_real_kwh_data(records):
-                await self._inject_statistics(records, date_key)
+                await self._inject_statistics(
+                    records,
+                    date_key,
+                    summary_totals=usage_data.get("SummaryTotals"),
+                )
 
         # Fetch today's partial data and inject it on every poll
         await self._fetch_and_inject_today(_nmi)
@@ -469,23 +538,18 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return False
 
     async def _get_sums_before(self, dt: datetime.datetime) -> dict[str, float]:
-        """Return the recorder cumulative sums for each statistic just before dt.
+        """Query the recorder for the last cumulative sum before a given datetime.
 
-        Queries the 48-hour window ending at dt so that the last committed
-        hourly row before dt is found even across DST transitions.
-        Returns 0.0 for any statistic with no recorded data before dt
-        (e.g. first-ever run).
+        Used by _reconcile_history to establish the correct baseline so that
+        re-injected days do not produce a sum lower than the previous recorded
+        value (which would manifest as a large negative delta in the dashboard).
         """
         start_dt = dt - datetime.timedelta(hours=48)
         result: dict = await get_instance(self.hass).async_add_executor_job(
             statistics_during_period,
-            self.hass,
-            start_dt,
-            dt,
+            self.hass, start_dt, dt,
             set(_STAT_METADATA.keys()),
-            "hour",
-            None,
-            {"sum"},
+            "hour", None, {"sum"},
         )
         sums: dict[str, float] = {}
         for stat_id in _STAT_METADATA:
@@ -498,54 +562,38 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return sums
 
     async def _reconcile_history(self) -> dict[str, float]:
-        """Fetch and re-inject the last BACKFILL_DAYS days in chronological order.
+        """Fetch the last BACKFILL_DAYS days and re-inject any that are missing.
 
-        Unlike the old backfill, this always seeds sums from the recorder value
-        just before the window rather than from _get_last_sums() (which returns
-        the highest current cumulative and causes inflated sums when later days
-        are already in the recorder). Re-injecting all available days in sequence
-        from the correct baseline repairs any gap and any corrupted cumulative
-        sums caused by out-of-order injection.
-
-        Returns the final cumulative sums after all days are processed.
+        Unlike the old _backfill_history, this method queries the recorder for
+        the cumulative sum *just before* the earliest available day so that
+        re-injected rows continue monotonically from the correct baseline
+        instead of from the current recorder high-water mark.
         """
         _LOGGER.info("Aurora+: reconciling last %d days of history", BACKFILL_DAYS)
-
-        # Collect all available days that have real kWh data
-        available: list[tuple[str, list[dict]]] = []
+        available: list[tuple[str, list[dict], dict]] = []
         for idx in range(-BACKFILL_DAYS, 0):
             try:
                 usage = await self.client.async_get_usage(
-                    timespan="day", index=idx, nmi=getattr(self, "_nmi", None)
-                )
+                    timespan="day", index=idx, nmi=getattr(self, "_nmi", None))
                 date_key = usage.get("StartDate")
                 records = usage.get("MeteredUsageRecords", [])
                 if date_key and self._has_real_kwh_data(records):
-                    available.append((date_key, records))
+                    available.append((date_key, records, usage.get("SummaryTotals")))
             except Exception as err:
-                _LOGGER.warning("Aurora+: could not fetch history index %d: %s", idx, err)
-
+                _LOGGER.warning(
+                    "Aurora+: could not fetch history index %d: %s", idx, err
+                )
         if not available:
             return await self._get_last_sums()
-
-        # Sort chronologically and seed sums from the recorder just before the window.
-        # This is correct for all cases:
-        #   first-ever run  → no prior data → sums = 0 → builds up correctly
-        #   normal startup  → sum from day before the window → correct continuation
-        #   gap recovery    → sum from before the gap → gap days injected correctly;
-        #                      subsequent days re-injected with repaired cumulative sums
         available.sort(key=lambda x: x[0])
         earliest_dt = dt_util.parse_datetime(available[0][0])
         if earliest_dt is None:
             return await self._get_last_sums()
         sums = await self._get_sums_before(dt_util.as_utc(earliest_dt))
-
-        # Re-inject all available days. Discard each from _injected_dates first
-        # so _inject_statistics processes it regardless of prior state.
-        for date_key, records in available:
+        for date_key, records, summary_totals in available:
             self._injected_dates.discard(date_key)
-            sums = await self._inject_statistics(records, date_key, sums)
-
+            sums = await self._inject_statistics(
+                records, date_key, sums, summary_totals=summary_totals)
         return sums
 
     async def _persist_state(self) -> None:
@@ -585,6 +633,7 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         records: list[dict[str, Any]],
         date_key: str,
         sums: dict[str, float] | None = None,
+        summary_totals: Optional[dict[str, Any]] = None,
     ) -> dict[str, float]:
         """Inject hourly metered records as external statistics into the recorder.
 
@@ -593,6 +642,11 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         Args:
             sums: Starting cumulative sums. If None, reads them from the recorder.
+            summary_totals: The day-level SummaryTotals block from the API
+                response. Required for non-zero dollar values — Aurora only
+                returns DollarValueUsage at the day level (per-hour records
+                have a null DollarValueUsage). Day totals are then distributed
+                across hours weighted by per-hour kWh share.
 
         Returns:
             The updated cumulative sums after all records have been processed.
@@ -603,6 +657,8 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # Process only hourly records — the Day-level record has null KilowattHourUsage
         hourly = [r for r in records if r.get("TimeMeasureUnit") == "Hour"]
+        # Pre-compute per-hour dollar distribution from day-level summary
+        hour_dollars = _distribute_day_dollars_by_kwh(hourly, summary_totals)
         for record in sorted(hourly, key=lambda r: r.get("StartTime", "")):
             start_str = record.get("StartTime")
             if not start_str:
@@ -613,16 +669,18 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             start_dt = dt_util.as_utc(start_dt)
 
             kwh_by_tariff: dict[str, Any] = record.get("KilowattHourUsage") or {}
-            dollar_by_tariff: dict[str, Any] = record.get("DollarValueUsage") or {}
+            dollars_for_hour: dict[str, float] = hour_dollars.get(start_str, {})
 
             t41_kwh        = float(kwh_by_tariff.get(TARIFF_T41)      or 0.0)
             t31_kwh        = float(kwh_by_tariff.get(TARIFF_T31)      or 0.0)
             t93peak_kwh    = float(kwh_by_tariff.get(TARIFF_T93PEAK)    or 0.0)
             t93offpeak_kwh = float(kwh_by_tariff.get(TARIFF_T93OFFPEAK) or 0.0)
             solar_kwh      = abs(float(kwh_by_tariff.get(TARIFF_T140) or 0.0))
-            t41_dollars    = float(dollar_by_tariff.get(TARIFF_T41) or 0.0)
-            t31_dollars    = float(dollar_by_tariff.get(TARIFF_T31) or 0.0)
-            solar_dollars  = abs(float(dollar_by_tariff.get(TARIFF_T140) or 0.0))
+            t41_dollars        = float(dollars_for_hour.get(TARIFF_T41)        or 0.0)
+            t31_dollars        = float(dollars_for_hour.get(TARIFF_T31)        or 0.0)
+            t93peak_dollars    = float(dollars_for_hour.get(TARIFF_T93PEAK)    or 0.0)
+            t93offpeak_dollars = float(dollars_for_hour.get(TARIFF_T93OFFPEAK) or 0.0)
+            solar_dollars      = abs(float(dollars_for_hour.get(TARIFF_T140) or 0.0))
             # Total consumption = all kWh except solar (T140)
             total_kwh = float(
                 sum(
@@ -631,26 +689,30 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     if k not in (TARIFF_T140, TARIFF_TOTAL)
                 )
             )
-            # Total cost = all dollar charges except solar credit and supply charge
+            # Total cost = all distributed dollar charges except solar credit
+            # (T140) and supply charge ("Other"). Aurora's "Total" key is a
+            # summary, also excluded.
             total_dollars = float(
                 sum(
                     float(v or 0.0)
-                    for k, v in dollar_by_tariff.items()
+                    for k, v in dollars_for_hour.items()
                     if k not in (TARIFF_T140, TARIFF_OTHER, TARIFF_TOTAL)
                 )
             )
 
             for stat_id, period_val in [
-                (STAT_ID_TOTAL_KWH,      total_kwh),
-                (STAT_ID_T41_KWH,        t41_kwh),
-                (STAT_ID_T31_KWH,        t31_kwh),
-                (STAT_ID_T93PEAK_KWH,    t93peak_kwh),
-                (STAT_ID_T93OFFPEAK_KWH, t93offpeak_kwh),
-                (STAT_ID_SOLAR_KWH,      solar_kwh),
-                (STAT_ID_TOTAL_DOLLARS,  total_dollars),
-                (STAT_ID_T41_DOLLARS,    t41_dollars),
-                (STAT_ID_T31_DOLLARS,    t31_dollars),
-                (STAT_ID_SOLAR_DOLLARS,  solar_dollars),
+                (STAT_ID_TOTAL_KWH,         total_kwh),
+                (STAT_ID_T41_KWH,           t41_kwh),
+                (STAT_ID_T31_KWH,           t31_kwh),
+                (STAT_ID_T93PEAK_KWH,       t93peak_kwh),
+                (STAT_ID_T93OFFPEAK_KWH,    t93offpeak_kwh),
+                (STAT_ID_SOLAR_KWH,         solar_kwh),
+                (STAT_ID_TOTAL_DOLLARS,     total_dollars),
+                (STAT_ID_T41_DOLLARS,       t41_dollars),
+                (STAT_ID_T31_DOLLARS,       t31_dollars),
+                (STAT_ID_T93PEAK_DOLLARS,   t93peak_dollars),
+                (STAT_ID_T93OFFPEAK_DOLLARS, t93offpeak_dollars),
+                (STAT_ID_SOLAR_DOLLARS,     solar_dollars),
             ]:
                 sums[stat_id] += period_val
                 stats[stat_id].append(
@@ -711,12 +773,17 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if not self._has_real_kwh_data(records):
             return
 
-        await self._inject_today_statistics(records, date_key)
+        await self._inject_today_statistics(
+            records,
+            date_key,
+            summary_totals=usage.get("SummaryTotals"),
+        )
 
     async def _inject_today_statistics(
         self,
         records: list[dict[str, Any]],
         date_key: str,
+        summary_totals: Optional[dict[str, Any]] = None,
     ) -> None:
         """Inject today's partial hourly records using a stable midnight base sum.
 
@@ -724,6 +791,10 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         existing rows — so calling this on every poll is safe and keeps cumulative
         sums consistent. Unlike _inject_statistics, this method intentionally does
         NOT add date_key to _injected_dates so today is always re-injectable.
+
+        summary_totals is the day-level SummaryTotals block from the API response;
+        required for non-zero dollar values (Aurora returns hourly DollarValueUsage
+        as null — see _distribute_day_dollars_by_kwh).
         """
         _tz = zoneinfo.ZoneInfo(TZ_HOBART)
         today = dt_util.now(_tz).date()
@@ -739,11 +810,20 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.debug("Aurora+: captured today's base sums for %s", today)
 
         sums = dict(self._today_base_sums)  # mutable copy — never mutate the cached base
+        # New stat IDs added in a release won't appear in a persisted base captured
+        # before the upgrade. Seed missing keys at 0 (correct: the stat had no rows
+        # at midnight) without re-reading the recorder mid-day, which would race
+        # against today's already-injected partial data.
+        for stat_id in _STAT_METADATA:
+            sums.setdefault(stat_id, 0.0)
         stats: dict[str, list[StatisticData]] = {k: [] for k in sums}
 
         hourly = [r for r in records if r.get("TimeMeasureUnit") == "Hour"]
         if not hourly:
             return
+
+        # Pre-compute per-hour dollar distribution from day-level summary
+        hour_dollars = _distribute_day_dollars_by_kwh(hourly, summary_totals)
 
         for record in sorted(hourly, key=lambda r: r.get("StartTime", "")):
             start_str = record.get("StartTime")
@@ -755,16 +835,18 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             start_dt = dt_util.as_utc(start_dt)
 
             kwh_by_tariff: dict[str, Any] = record.get("KilowattHourUsage") or {}
-            dollar_by_tariff: dict[str, Any] = record.get("DollarValueUsage") or {}
+            dollars_for_hour: dict[str, float] = hour_dollars.get(start_str, {})
 
             t41_kwh        = float(kwh_by_tariff.get(TARIFF_T41)        or 0.0)
             t31_kwh        = float(kwh_by_tariff.get(TARIFF_T31)        or 0.0)
             t93peak_kwh    = float(kwh_by_tariff.get(TARIFF_T93PEAK)    or 0.0)
             t93offpeak_kwh = float(kwh_by_tariff.get(TARIFF_T93OFFPEAK) or 0.0)
             solar_kwh      = abs(float(kwh_by_tariff.get(TARIFF_T140)   or 0.0))
-            t41_dollars    = float(dollar_by_tariff.get(TARIFF_T41)     or 0.0)
-            t31_dollars    = float(dollar_by_tariff.get(TARIFF_T31)     or 0.0)
-            solar_dollars  = abs(float(dollar_by_tariff.get(TARIFF_T140) or 0.0))
+            t41_dollars        = float(dollars_for_hour.get(TARIFF_T41)        or 0.0)
+            t31_dollars        = float(dollars_for_hour.get(TARIFF_T31)        or 0.0)
+            t93peak_dollars    = float(dollars_for_hour.get(TARIFF_T93PEAK)    or 0.0)
+            t93offpeak_dollars = float(dollars_for_hour.get(TARIFF_T93OFFPEAK) or 0.0)
+            solar_dollars      = abs(float(dollars_for_hour.get(TARIFF_T140)   or 0.0))
             total_kwh = float(sum(
                 float(v or 0.0)
                 for k, v in kwh_by_tariff.items()
@@ -772,21 +854,23 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             ))
             total_dollars = float(sum(
                 float(v or 0.0)
-                for k, v in dollar_by_tariff.items()
+                for k, v in dollars_for_hour.items()
                 if k not in (TARIFF_T140, TARIFF_OTHER, TARIFF_TOTAL)
             ))
 
             for stat_id, period_val in [
-                (STAT_ID_TOTAL_KWH,      total_kwh),
-                (STAT_ID_T41_KWH,        t41_kwh),
-                (STAT_ID_T31_KWH,        t31_kwh),
-                (STAT_ID_T93PEAK_KWH,    t93peak_kwh),
-                (STAT_ID_T93OFFPEAK_KWH, t93offpeak_kwh),
-                (STAT_ID_SOLAR_KWH,      solar_kwh),
-                (STAT_ID_TOTAL_DOLLARS,  total_dollars),
-                (STAT_ID_T41_DOLLARS,    t41_dollars),
-                (STAT_ID_T31_DOLLARS,    t31_dollars),
-                (STAT_ID_SOLAR_DOLLARS,  solar_dollars),
+                (STAT_ID_TOTAL_KWH,          total_kwh),
+                (STAT_ID_T41_KWH,            t41_kwh),
+                (STAT_ID_T31_KWH,            t31_kwh),
+                (STAT_ID_T93PEAK_KWH,        t93peak_kwh),
+                (STAT_ID_T93OFFPEAK_KWH,     t93offpeak_kwh),
+                (STAT_ID_SOLAR_KWH,          solar_kwh),
+                (STAT_ID_TOTAL_DOLLARS,      total_dollars),
+                (STAT_ID_T41_DOLLARS,        t41_dollars),
+                (STAT_ID_T31_DOLLARS,        t31_dollars),
+                (STAT_ID_T93PEAK_DOLLARS,    t93peak_dollars),
+                (STAT_ID_T93OFFPEAK_DOLLARS, t93offpeak_dollars),
+                (STAT_ID_SOLAR_DOLLARS,      solar_dollars),
             ]:
                 sums[stat_id] += period_val
                 stats[stat_id].append(
