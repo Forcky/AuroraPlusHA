@@ -370,17 +370,16 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         parsed[SENSOR_PH_TOTAL_SAVINGS] = self._powerhour_savings_cache
         self._nmi = parsed.get("nmi")
 
-        # Reconcile history once per HA startup: re-fetches the last BACKFILL_DAYS
-        # days and re-injects any that are missing, starting from the correct
-        # cumulative baseline so the sum is always monotonically increasing.
+        # Reconcile history once per HA startup in the background so it does not
+        # block async_config_entry_first_refresh (which would trigger the HA
+        # "waiting for integrations" bootstrap warning for 7+ sequential API calls).
         if not self._backfill_done:
-            backfill_sums = await self._reconcile_history()
             self._backfill_done = True
-            _tz = zoneinfo.ZoneInfo(TZ_HOBART)
-            if self._today_base_date != dt_util.now(_tz).date() and backfill_sums:
-                self._today_base_sums = backfill_sums
-                self._today_base_date = dt_util.now(_tz).date()
-                await self._persist_state()
+            self.entry.async_create_background_task(
+                self.hass,
+                self._reconcile_and_update_base(),
+                "aurora_energy_reconcile",
+            )
 
         # Inject the fetched day's records if not already done
         date_key = parsed.get("start_date")
@@ -560,6 +559,19 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             else:
                 sums[stat_id] = 0.0
         return sums
+
+    async def _reconcile_and_update_base(self) -> None:
+        """Background task: reconcile history then refresh today's base sums."""
+        _tz = zoneinfo.ZoneInfo(TZ_HOBART)
+        try:
+            backfill_sums = await self._reconcile_history()
+        except Exception as err:
+            _LOGGER.error("Aurora+: history reconciliation failed: %s", err)
+            return
+        if self._today_base_date != dt_util.now(_tz).date() and backfill_sums:
+            self._today_base_sums = backfill_sums
+            self._today_base_date = dt_util.now(_tz).date()
+            await self._persist_state()
 
     async def _reconcile_history(self) -> dict[str, float]:
         """Fetch the last BACKFILL_DAYS days and re-inject any that are missing.
