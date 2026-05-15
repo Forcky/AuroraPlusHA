@@ -294,8 +294,8 @@ class AuroraApiClient:
             ) as resp:
                 if resp.status == 401:
                     if attempt == 0:
-                        _LOGGER.warning(
-                            "Aurora 401 from %s (token prefix: %s...)",
+                        _LOGGER.debug(
+                            "Aurora 401 from %s (token prefix: %s...) — refreshing token",
                             url,
                             (self._access_token or "")[:20],
                         )
