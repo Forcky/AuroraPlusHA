@@ -19,22 +19,6 @@ A custom Home Assistant integration that pulls your Aurora Energy Tasmania billi
 
 - Home Assistant 2025.11 or later
 - An Aurora Energy Tasmania account with Aurora+ access
-- A web browser with DevTools (to extract your id_token)
-
----
-
-## Getting your id_token
-
-The integration authenticates using a short-lived Azure B2C id_token from the Aurora+ web portal. You need to capture this from your browser's network traffic.
-
-1. Open the [Aurora+ web portal](https://my.auroraenergy.com.au) in your browser
-2. Press **F12** to open DevTools and go to the **Network** tab
-3. Log in to Aurora+ — **make sure to tick "Keep me logged in"**
-4. In the Network tab, filter by `LoginToken`
-5. Click the `LoginToken` request → **Request Payload**
-6. Copy the value of the `token` field — it is a long string starting with `eyJ...`
-
-> **Important:** The id_token expires within a few minutes of login. Have the Home Assistant setup screen ready and submit the token immediately after copying it.
 
 ---
 
@@ -50,7 +34,7 @@ The integration authenticates using a short-lived Azure B2C id_token from the Au
 6. Restart Home Assistant
 7. Go to **Settings → Devices & Services → Add Integration**
 8. Search for **Aurora Energy Tasmania**
-9. Paste your id_token into the field and click **Submit**
+9. Click the **Log in to Aurora+** link that appears, log in (tick **Keep me logged in**), then copy the full URL from your browser's address bar and paste it into Home Assistant
 
 HACS will notify you of future updates so you can update with a single click.
 
@@ -74,7 +58,7 @@ HACS will notify you of future updates so you can update with a single click.
 2. Restart Home Assistant
 3. Go to **Settings → Devices & Services → Add Integration**
 4. Search for **Aurora Energy Tasmania**
-5. Paste your id_token into the field and click **Submit**
+5. Click the **Log in to Aurora+** link, log in (tick **Keep me logged in**), copy the full URL from your browser's address bar, and paste it into Home Assistant
 
 If setup succeeds, a device called **Aurora Energy** will appear with all sensors populated.
 
@@ -134,7 +118,7 @@ The following sensors exist but are disabled by default. Enable them via **Setti
 | T93 Peak Cost | T93 peak tariff cost (AUD) | T93 time-of-use accounts |
 | T93 Off-Peak Usage | T93 off-peak tariff consumption (kWh) | T93 time-of-use accounts |
 | T93 Off-Peak Cost | T93 off-peak tariff cost (AUD) | T93 time-of-use accounts |
-| Tariff Period End | When the current tariff contract period ends | T93 accounts |
+| T93 Tariff Period End | When the current T93 tariff period ends (peak or off-peak boundary) | T93 accounts |
 | Unread Notifications | Number of unread Aurora+ notifications | All accounts |
 | Direct Debit | Whether a direct debit arrangement is active (`active`/`inactive`) | All accounts |
 | Auto Payment | Whether auto-payment (card) is configured (`active`/`inactive`) | All accounts |
@@ -196,9 +180,9 @@ Aurora's API only exposes dollar values at the day level, so per-hour cost stati
 
 ## Re-authentication
 
-The id_token is exchanged for a longer-lived access and refresh token pair on first login. Under normal operation you will not need to re-authenticate.
+On first login the integration exchanges your credentials for a longer-lived token pair. Under normal operation you will not need to re-authenticate for many months.
 
-If your session fully expires (HA will show a notification), repeat the id_token steps above and enter the new token when prompted. Once re-authentication succeeds, the new tokens are immediately saved and the integration reloads — you should not be prompted again.
+If your session fully expires (HA will show a notification), click through the re-authentication flow — the same login link approach as initial setup. Once re-authentication succeeds the new tokens are immediately saved and the integration reloads.
 
 After re-authenticating, restart Home Assistant to trigger the automatic backfill and recover any Energy Dashboard data that was missed while authentication was broken.
 
@@ -237,8 +221,11 @@ The sensor always computes against fixed AEST (UTC+10) regardless of local Hobar
 
 ## Troubleshooting
 
-### "Invalid token" error during setup
-The id_token expired before you submitted it. Grab a fresh token from the Aurora+ portal and submit it within 30 seconds of copying it.
+### "Invalid redirect URL" error during setup
+Make sure you copied the complete URL from your browser's address bar after the Aurora+ login redirect — it should start with `https://my.auroraenergy.com.au/login/redirect?code=`. Don't copy just part of the URL.
+
+### "Authentication failed" error during setup
+The login was rejected by Aurora+. Try again with a fresh login link (reload the setup step) and ensure you ticked **Keep me logged in** when logging in.
 
 ### Re-authentication prompt reappears immediately after submitting a new token
 Ensure you are running the latest version of this integration. Earlier versions had a bug where the new tokens were not saved after re-auth, causing the integration to immediately fail again with the old expired credentials on reload.

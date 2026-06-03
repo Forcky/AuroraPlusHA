@@ -51,7 +51,6 @@ from .const import (
     SENSOR_T93OFFPEAK_KWH,
     SENSOR_T93PEAK_DOLLARS,
     SENSOR_T93PEAK_KWH,
-    SENSOR_TARIFF_PERIOD_END,
     SENSOR_TOTAL_DOLLARS,
     SENSOR_TOTAL_KWH,
     SENSOR_UNBILLED_AMOUNT,
@@ -267,16 +266,6 @@ SENSOR_DESCRIPTIONS: tuple[AuroraSensorEntityDescription, ...] = (
         icon="mdi:file-document-alert",
     ),
     AuroraSensorEntityDescription(
-        key=SENSOR_TARIFF_PERIOD_END,
-        name="Tariff Period End",
-        data_key=SENSOR_TARIFF_PERIOD_END,
-        native_unit_of_measurement=None,
-        device_class=SensorDeviceClass.TIMESTAMP,
-        state_class=None,
-        icon="mdi:calendar-end",
-        entity_registry_enabled_default=False,
-    ),
-    AuroraSensorEntityDescription(
         key=SENSOR_UNREAD_NOTIFS,
         name="Unread Notifications",
         data_key=SENSOR_UNREAD_NOTIFS,
@@ -442,6 +431,7 @@ async def async_setup_entry(
         for description in SENSOR_DESCRIPTIONS
     ]
     entities.append(TariffPeriodSensor(entry))
+    entities.append(TariffPeriodEndSensor(entry))
     async_add_entities(entities)
 
 
@@ -549,6 +539,96 @@ class TariffPeriodSensor(SensorEntity):
           11:00 UTC = 21:00 AEST (afternoon peak end → off-peak)
           14:00 UTC = 00:00 AEST (midnight weekday/weekend boundary)
         """
+        for hr in (0, 6, 11, 14, 21):
+            self._unsub_listeners.append(
+                async_track_utc_time_change(
+                    self.hass,
+                    self._handle_time_change,
+                    hour=hr,
+                    minute=0,
+                    second=0,
+                )
+            )
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Cancel time-change listeners on removal."""
+        for unsub in self._unsub_listeners:
+            unsub()
+        self._unsub_listeners.clear()
+
+    async def _handle_time_change(self, now: Any) -> None:
+        """Recompute and push state at tariff transition times."""
+        self.async_write_ha_state()
+
+
+class TariffPeriodEndSensor(SensorEntity):
+    """Sensor showing the UTC datetime when the current T93 tariff period ends.
+
+    Computed from the current AEST (UTC+10) time against the fixed T93 schedule
+    — identical rules to TariffPeriodSensor. Updates are triggered by the same
+    5 UTC time-change listeners so the state flips at the correct second.
+
+    Aurora T93 schedule (NEM clock, AEST UTC+10 — does NOT observe daylight saving):
+      Peak:     07:00–10:00 AEST, Monday–Friday
+      Peak:     16:00–21:00 AEST, Monday–Friday
+      Off-peak: all other times
+
+    Note: public holidays are treated as weekdays by this implementation.
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "T93 Tariff Period End"
+    _attr_icon = "mdi:calendar-end"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_should_poll = False
+    _attr_entity_registry_enabled_default = False
+
+    _AEST = datetime.timezone(datetime.timedelta(hours=10))
+
+    def __init__(self, entry: ConfigEntry) -> None:
+        self._entry = entry
+        # Preserve the old unique_id so existing entity registrations survive the rename.
+        self._attr_unique_id = f"{entry.entry_id}_tariff_period_end"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, entry.entry_id)},
+            name="Aurora Energy",
+            manufacturer="Aurora Energy Tasmania",
+            model="Aurora+",
+            entry_type=DeviceEntryType.SERVICE,
+        )
+        self._unsub_listeners: list = []
+
+    @property
+    def native_value(self) -> datetime.datetime:
+        """Return the UTC datetime of the next T93 tariff boundary."""
+        now_aest = dt_util.utcnow().astimezone(self._AEST)
+        hour = now_aest.hour
+        weekday = now_aest.weekday()  # 0=Mon … 6=Sun
+        today = now_aest.replace(hour=0, minute=0, second=0, microsecond=0)
+
+        if weekday < 5:  # Monday–Friday
+            if hour < 7:
+                end_aest = today.replace(hour=7)
+            elif hour < 10:
+                end_aest = today.replace(hour=10)
+            elif hour < 16:
+                end_aest = today.replace(hour=16)
+            elif hour < 21:
+                end_aest = today.replace(hour=21)
+            else:
+                # Off-peak evening: next peak is 07:00 the next weekday.
+                # Friday (weekday=4) wraps to Monday (+3 days).
+                days_ahead = 3 if weekday == 4 else 1
+                end_aest = (today + datetime.timedelta(days=days_ahead)).replace(hour=7)
+        else:
+            # Saturday (5) or Sunday (6): next peak is Monday 07:00.
+            days_to_monday = 7 - weekday  # Sat→2, Sun→1
+            end_aest = (today + datetime.timedelta(days=days_to_monday)).replace(hour=7)
+
+        return end_aest.astimezone(datetime.timezone.utc)
+
+    async def async_added_to_hass(self) -> None:
+        """Register UTC time-change listeners for exact AEST tariff transitions."""
         for hr in (0, 6, 11, 14, 21):
             self._unsub_listeners.append(
                 async_track_utc_time_change(

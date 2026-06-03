@@ -31,7 +31,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     client = AuroraApiClient(
         session=session,
-        id_token=entry.data[CONF_ID_TOKEN],
+        id_token=entry.data.get(CONF_ID_TOKEN, ""),
         service_agreement_id=entry.data[CONF_SERVICE_AGREEMENT_ID],
         customer_id=entry.data[CONF_CUSTOMER_ID],
         hass=hass,
