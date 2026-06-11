@@ -66,23 +66,25 @@ The `TariffPeriodSensor` and Aurora's T93 boundaries run on the **NEM clock = fi
 
 ## Keeping docs in sync
 
-`README.md` and `API.md` are the only user-facing docs and they drift quickly if not maintained alongside code. When making changes, update them in the same PR (or as an explicit follow-up docs sweep — see commit `bb399f1` for the pattern).
+`README.md` and `API.md` are the only user-facing docs. **Always update `README.md` in the same commit as any code change that affects user-visible behaviour.** Do not leave it as a follow-up — if a future commit message says "docs: update README" it means the previous commit shipped with stale docs.
 
-**Update `README.md` when:**
-- Adding/removing/renaming a sensor → update the sensor table (and the "Disabled by default" table if applicable)
-- Adding a new external statistic ID → update the Energy Dashboard statistics table
-- Adding a statistic that existing installs won't auto-backfill → add a "Note for existing installs" with the `.storage/aurora_energy_<entry_id>_backfill` wipe instructions
-- Bumping the minimum HA version or hitting a deprecation cutover → add a compatibility note (e.g. the HA 2026.11 `StatisticMeanType` note)
-- Changing data refresh cadence, tariff handling, or a Power Hours state value
-- Changing the auth flow or token-extraction steps
+**Update `README.md` whenever you:**
+- Add, remove, or rename a sensor → update the sensor table and the "Disabled by default" table if applicable
+- Add a new external statistic ID → update the Energy Dashboard statistics table
+- Add a statistic that existing installs won't auto-backfill → add a "Note for existing installs" with the `.storage/aurora_energy_<entry_id>_backfill` wipe instructions
+- Change data refresh cadence or polling behaviour → update the Data availability table and any relevant notes
+- Change tariff handling, peak/off-peak schedule, or a Power Hours state value
+- Change the auth flow or setup steps
+- Bump the minimum HA version or hit a deprecation cutover → add a compatibility note
+- Change any troubleshooting advice that is no longer accurate
 
 **Update `API.md` when:**
-- Discovering new fields, response shapes, or undocumented behavior in the Aurora REST API
-- Hitting a new API quirk that bit us → add it to the "Known quirks" table AND the relevant endpoint section (the commit above documented the `index=0` UTC vs Hobart-local trap in both places)
+- Discovering new fields, response shapes, or undocumented behaviour in the Aurora REST API
+- Hitting a new API quirk → add it to the "Known quirks" table AND the relevant endpoint section
 - Adding integration support for a new endpoint
 - Confirming or invalidating a previously-noted assumption
 
-**Don't update for:** internal refactors, coordinator-only changes that don't alter the user-visible sensor surface, or pure bug fixes that don't change documented behavior.
+**Skip docs updates only for:** pure internal refactors with no user-visible effect (e.g. renaming a private variable, extracting a helper function).
 
 ## Reference docs in repo
 
