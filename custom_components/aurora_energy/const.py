@@ -1,6 +1,4 @@
 """Constants for the Aurora Energy integration."""
-from datetime import timedelta
-
 DOMAIN = "aurora_energy"
 
 # Config entry keys
@@ -21,8 +19,6 @@ ENDPOINT_POWERHOUR_UPCOMING   = "/powerhour/upcoming-active"
 ENDPOINT_POWERHOUR_ALL        = "/powerhour/all"
 ENDPOINT_USAGE_BILLING_PERIOD = "/usage/billing-period"
 ENDPOINT_PAYMENT_ACTIVE       = "/payment/activepayment/{account_number}"
-
-POLL_INTERVAL = timedelta(hours=1)
 
 # Tariff names as returned by the API
 TARIFF_T41 = "T41"

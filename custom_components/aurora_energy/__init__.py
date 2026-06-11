@@ -10,6 +10,7 @@ import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.event import async_track_utc_time_change
 
 from .api import AuroraApiClient
 from .const import (
@@ -42,6 +43,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # This performs the first data fetch and raises ConfigEntryNotReady if it fails.
     await coordinator.async_config_entry_first_refresh()
+
+    # Poll 5 seconds past every clock hour so transitions (tariff periods,
+    # power hours) are picked up within seconds rather than up to 59 minutes late.
+    entry.async_on_unload(
+        async_track_utc_time_change(
+            hass,
+            lambda _: hass.async_create_task(coordinator.async_refresh()),
+            minute=0,
+            second=5,
+        )
+    )
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
         "coordinator": coordinator,

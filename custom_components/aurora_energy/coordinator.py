@@ -34,7 +34,6 @@ from .api import AuroraApiClient, TokenRefreshError
 from .const import (
     BACKFILL_DAYS,
     DOMAIN,
-    POLL_INTERVAL,
     SENSOR_AUTO_PAYMENT,
     SENSOR_BILL_DUE,
     SENSOR_BP_COST,
@@ -281,7 +280,7 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             hass,
             _LOGGER,
             name=DOMAIN,
-            update_interval=POLL_INTERVAL,
+            update_interval=None,
         )
         self.client = client
         self.entry = entry
