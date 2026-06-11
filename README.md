@@ -11,7 +11,7 @@ A custom Home Assistant integration that pulls your Aurora Energy Tasmania billi
 - Power Hours demand-response program sensors (status, timeslot, savings)
 - Billing period totals (cumulative kWh and cost for the current billing cycle)
 - Historical statistics for the Energy Dashboard (backfills up to 7 days on every HA restart to cover gaps; today's partial hourly data updated each poll)
-- Automatic hourly refresh
+- Polling aligned to the clock hour — sensors update within seconds of Aurora+ events rather than up to 59 minutes late
 
 ---
 
@@ -102,7 +102,7 @@ If setup succeeds, a device called **Aurora Energy** will appear with all sensor
 | `confirmed` | You've accepted a timeslot — free electricity starts at **Power Hour Start** and ends at **Power Hour End** |
 | `active` | Your Power Hours timeslot is currently running — electricity is free right now |
 
-> **Note:** The coordinator evaluates the start and end timestamps on every poll and sets the status to `active` directly — your dashboard can use a simple `condition: state` check rather than comparing timestamps in a template.
+> **Note:** The coordinator evaluates the start and end timestamps on every poll and sets the status to `active` directly — your dashboard can use a simple `condition: state` check rather than comparing timestamps in a template. Because polling is aligned to the clock hour, status transitions are reflected within ~5 seconds of the event start or end time.
 
 ### Disabled by default
 
@@ -168,12 +168,12 @@ Aurora's API only exposes dollar values at the day level, so per-hour cost stati
 
 | Data type | Refresh interval | Notes |
 |-----------|-----------------|-------|
-| Billing data | Every hour | Balance, amount owed, etc. update immediately |
-| Usage data | Every hour | Reflects the previous day; Aurora releases meter data around 8–9am AEST each morning |
+| Billing data | Every clock hour | Balance, amount owed, etc. — polled 5 seconds past each hour |
+| Usage data | Every clock hour | Reflects the previous day; Aurora releases meter data around 8–9am AEST each morning |
 | Energy Dashboard stats (historical) | Once per day | Hourly records injected once per completed day; up to 7-day backfill on every HA restart |
-| Energy Dashboard stats (today) | Every hour | Today's partial hourly data re-injected each poll if the API returns it |
-| Billing period totals | Every hour | Running kWh/cost totals for the current billing cycle |
-| Power Hours (upcoming) | Every hour | Active event, timeslot, and selection deadline |
+| Energy Dashboard stats (today) | Every clock hour | Today's partial hourly data re-injected each poll if the API returns it |
+| Billing period totals | Every clock hour | Running kWh/cost totals for the current billing cycle |
+| Power Hours (upcoming) | Every clock hour | Active event, timeslot, and selection deadline — status reflects transitions within ~5 seconds |
 | Power Hours (total savings) | Once per day | Recalculated from full event history once daily |
 
 ---
