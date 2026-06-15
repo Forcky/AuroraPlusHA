@@ -46,10 +46,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Poll 5 seconds past every clock hour so transitions (tariff periods,
     # power hours) are picked up within seconds rather than up to 59 minutes late.
+    async def _on_hour(_now) -> None:
+        await coordinator.async_refresh()
+
     entry.async_on_unload(
         async_track_utc_time_change(
             hass,
-            lambda _: hass.async_create_task(coordinator.async_refresh()),
+            _on_hour,
             minute=0,
             second=5,
         )

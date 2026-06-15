@@ -1,7 +1,7 @@
 {
   "domain": "aurora_energy",
   "name": "Aurora Energy Tasmania (Aurora+)",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "config_flow": true,
   "iot_class": "cloud_polling",
   "dependencies": ["recorder"],
