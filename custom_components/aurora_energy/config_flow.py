@@ -68,17 +68,29 @@ def _build_auth_url(code_challenge: str) -> str:
     return f"{_B2C_AUTHORIZE}?{urlencode(params)}"
 
 
-def _parse_code_from_redirect(redirect_url: str) -> str:
-    """Extract the authorization code from the Aurora+ post-login redirect URL.
+def _parse_auth_input(user_input: str) -> tuple[str, str]:
+    """Parse what the user pasted and return (kind, value).
 
-    Raises ValueError if no 'code' parameter is present.
+    Accepted forms:
+      - Full redirect URL containing ?code=  → ("code", "<auth_code>")
+      - Bare JWT (eyJ…, two dots)            → ("id_token", "<jwt>")
+
+    Raises ValueError for anything else.
     """
-    parsed = urlparse(redirect_url.strip())
-    params = parse_qs(parsed.query)
-    codes = params.get("code", [])
-    if not codes:
-        raise ValueError("No 'code' query parameter found in URL")
-    return codes[0]
+    stripped = user_input.strip()
+
+    # JWT id_token: three base64 segments separated by two dots
+    if stripped.count(".") == 2 and stripped.startswith("eyJ"):
+        return ("id_token", stripped)
+
+    # Redirect URL containing an authorization code
+    if "://" in stripped:
+        params = parse_qs(urlparse(stripped).query)
+        codes = params.get("code", [])
+        if codes:
+            return ("code", codes[0])
+
+    raise ValueError("Input is neither a valid redirect URL nor a JWT id_token")
 
 
 async def _exchange_code_for_id_token(
@@ -148,14 +160,17 @@ class AuroraConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             try:
-                code = _parse_code_from_redirect(user_input["redirect_url"])
+                kind, value = _parse_auth_input(user_input["redirect_url"])
             except ValueError:
                 errors["base"] = "invalid_redirect_url"
             else:
                 try:
-                    id_token = await _exchange_code_for_id_token(
-                        self.hass, code, self._pkce_verifier
-                    )
+                    if kind == "code":
+                        id_token = await _exchange_code_for_id_token(
+                            self.hass, value, self._pkce_verifier
+                        )
+                    else:
+                        id_token = value
                     service_agreement_id, customer_id, access_token, refresh_token, refresh_cookie = (
                         await _validate_token(self.hass, id_token)
                     )
@@ -206,14 +221,17 @@ class AuroraConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             try:
-                code = _parse_code_from_redirect(user_input["redirect_url"])
+                kind, value = _parse_auth_input(user_input["redirect_url"])
             except ValueError:
                 errors["base"] = "invalid_redirect_url"
             else:
                 try:
-                    id_token = await _exchange_code_for_id_token(
-                        self.hass, code, self._pkce_verifier
-                    )
+                    if kind == "code":
+                        id_token = await _exchange_code_for_id_token(
+                            self.hass, value, self._pkce_verifier
+                        )
+                    else:
+                        id_token = value
                     service_agreement_id, customer_id, access_token, refresh_token, refresh_cookie = (
                         await _validate_token(self.hass, id_token)
                     )

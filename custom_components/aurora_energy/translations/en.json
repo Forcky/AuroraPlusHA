@@ -3,27 +3,28 @@
     "step": {
       "user": {
         "title": "Aurora Energy (Aurora+) Setup",
-        "description": "**How to get your ID Token:**\n\n1. Open [https://my.auroraenergy.com.au](https://my.auroraenergy.com.au) in your browser\n2. Press **F12** to open DevTools, then go to the **Network** tab\n3. Log in to Aurora+ (tick **Keep me logged in**)\n4. In the Network tab, filter by `LoginToken`\n5. Click the `LoginToken` request → **Request Payload**\n6. Copy the `token` value — a long string starting with `eyJ`\n\n**Important:** Have this screen ready before you log in — the token expires within minutes of login.",
+        "description": "**Step 1:** Click the link below to open the Aurora+ login page.\n\n[Log in to Aurora+]({auth_url})\n\n**Step 2:** Log in to your Aurora+ account. Make sure to tick **Keep me logged in**.\n\n**Step 3 — paste one of the following into the field below:**\n\n**Option A (easiest):** After logging in, open the browser's Network tab (F12 → Network), filter by `LoginToken`, click that request → **Request Payload**, and copy the `token` value (a long string starting with `eyJ`).\n\n**Option B:** After logging in you will briefly be redirected. Copy the **full URL** from your browser's address bar before the page loads — it starts with `https://my.auroraenergy.com.au/login/redirect?code=`.",
         "data": {
-          "id_token": "ID Token"
+          "redirect_url": "Token or Redirect URL"
         },
         "data_description": {
-          "id_token": "Paste the token value from the LoginToken network request (starts with eyJ)"
+          "redirect_url": "Paste either the eyJ… id_token from the LoginToken network request, or the full redirect URL starting with https://my.auroraenergy.com.au/login/redirect?code="
         }
       },
       "reauth_confirm": {
         "title": "Re-authenticate Aurora Energy",
-        "description": "**Your session has expired. Get a new token:**\n\n1. Open [https://my.auroraenergy.com.au](https://my.auroraenergy.com.au) in your browser\n2. Press **F12** to open DevTools, then go to the **Network** tab\n3. Log in to Aurora+ (tick **Keep me logged in**)\n4. In the Network tab, filter by `LoginToken`\n5. Click the `LoginToken` request → **Request Payload**\n6. Copy the `token` value — a long string starting with `eyJ`\n\n**Important:** Have this screen ready before you log in — the token expires within minutes of login.",
+        "description": "**Your session has expired. Please log in again.**\n\n**Step 1:** Click the link below to open the Aurora+ login page.\n\n[Log in to Aurora+]({auth_url})\n\n**Step 2:** Log in to your Aurora+ account. Make sure to tick **Keep me logged in**.\n\n**Step 3 — paste one of the following into the field below:**\n\n**Option A (easiest):** After logging in, open the browser's Network tab (F12 → Network), filter by `LoginToken`, click that request → **Request Payload**, and copy the `token` value (a long string starting with `eyJ`).\n\n**Option B:** After logging in you will briefly be redirected. Copy the **full URL** from your browser's address bar before the page loads — it starts with `https://my.auroraenergy.com.au/login/redirect?code=`.",
         "data": {
-          "id_token": "ID Token"
+          "redirect_url": "Token or Redirect URL"
         },
         "data_description": {
-          "id_token": "Paste the token value from the LoginToken network request (starts with eyJ)"
+          "redirect_url": "Paste either the eyJ… id_token from the LoginToken network request, or the full redirect URL starting with https://my.auroraenergy.com.au/login/redirect?code="
         }
       }
     },
     "error": {
-      "invalid_token": "The token is invalid or has expired. Please obtain a fresh token and try again.",
+      "invalid_redirect_url": "Could not read your input. Paste either the eyJ… id_token from the LoginToken network request, or the full redirect URL (https://my.auroraenergy.com.au/login/redirect?code=…).",
+      "invalid_token": "Authentication failed. The token may have expired — please obtain a fresh one and try again.",
       "cannot_connect": "Unable to connect to the Aurora+ API. Check your network connection and try again.",
       "unknown": "An unexpected error occurred. Check the Home Assistant logs for details."
     },
