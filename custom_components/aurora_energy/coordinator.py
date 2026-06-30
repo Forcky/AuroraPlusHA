@@ -498,8 +498,10 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 else:
                     data[SENSOR_PH_STATUS] = "confirmed"
             else:
-                data[SENSOR_PH_START] = None
-                data[SENSOR_PH_END]   = None
+                # No slot confirmed yet — use event-level timing so sensors
+                # show the proposed window during the selection_pending state.
+                data[SENSOR_PH_START] = _parse_hobart_naive(event.get("StartDateTime"), _tz)
+                data[SENSOR_PH_END]   = _parse_hobart_naive(event.get("ExpiryDateTime"), _tz)
                 now_utc = dt_util.utcnow()
                 data[SENSOR_PH_STATUS] = (
                     "selection_pending"
