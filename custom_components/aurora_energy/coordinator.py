@@ -44,6 +44,7 @@ from .const import (
     SENSOR_OVERDUE_AMOUNT,
     SENSOR_PH_END,
     SENSOR_PH_EVENT_NAME,
+    SENSOR_PH_FIRST_SLOT_START,
     SENSOR_PH_SELECTION_DEADLINE,
     SENSOR_PH_START,
     SENSOR_PH_STATUS,
@@ -483,26 +484,53 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         _tz = zoneinfo.ZoneInfo(TZ_HOBART)
         if powerhour_upcoming:
             event = powerhour_upcoming[0]
+            now_utc = dt_util.utcnow()
             data[SENSOR_PH_EVENT_NAME] = event.get("EventName")
             expiry_dt = _parse_hobart_naive(event.get("OfferExpiryDateTime"), _tz)
             data[SENSOR_PH_SELECTION_DEADLINE] = expiry_dt
+
+            # Parse all offered timeslots once — used for the first-bookable-slot
+            # sensor and the selection_pending Start/End fallback. Each slot
+            # lapses individually at its own ExpiryDateTime (~5 min before the
+            # slot starts), so "first slot" means the earliest still-bookable one.
+            slot_starts: list[datetime.datetime] = []
+            slot_ends: list[datetime.datetime] = []
+            first_bookable: Optional[datetime.datetime] = None
+            for offered in event.get("TimeslotAll") or []:
+                s_start = _parse_hobart_naive(offered.get("StartDateTime"), _tz)
+                if s_start is None:
+                    continue
+                s_end = _parse_hobart_naive(offered.get("EndDateTime"), _tz)
+                s_expiry = _parse_hobart_naive(offered.get("ExpiryDateTime"), _tz)
+                slot_starts.append(s_start)
+                if s_end:
+                    slot_ends.append(s_end)
+                bookable = s_expiry > now_utc if s_expiry else s_start > now_utc
+                if bookable and (first_bookable is None or s_start < first_bookable):
+                    first_bookable = s_start
+            data[SENSOR_PH_FIRST_SLOT_START] = first_bookable
+
             slot = event.get("TimeslotAccepted")
             if slot:
                 start_dt = _parse_hobart_naive(slot.get("StartDateTime"), _tz)
                 end_dt   = _parse_hobart_naive(slot.get("EndDateTime"), _tz)
                 data[SENSOR_PH_START] = start_dt
                 data[SENSOR_PH_END]   = end_dt
-                now_utc = dt_util.utcnow()
                 if start_dt and end_dt and start_dt <= now_utc <= end_dt:
                     data[SENSOR_PH_STATUS] = "active"
                 else:
                     data[SENSOR_PH_STATUS] = "confirmed"
             else:
-                # No slot confirmed yet — use event-level timing so sensors
-                # show the proposed window during the selection_pending state.
-                data[SENSOR_PH_START] = _parse_hobart_naive(event.get("StartDateTime"), _tz)
-                data[SENSOR_PH_END]   = _parse_hobart_naive(event.get("ExpiryDateTime"), _tz)
-                now_utc = dt_util.utcnow()
+                # No slot confirmed yet — show the bookable window (earliest
+                # slot start → latest slot end). The event-level StartDateTime
+                # is the announcement time, not a power window (issue #11), so
+                # it is only a last resort when the API returns no timeslots.
+                if slot_starts:
+                    data[SENSOR_PH_START] = min(slot_starts)
+                    data[SENSOR_PH_END]   = max(slot_ends) if slot_ends else None
+                else:
+                    data[SENSOR_PH_START] = _parse_hobart_naive(event.get("StartDateTime"), _tz)
+                    data[SENSOR_PH_END]   = _parse_hobart_naive(event.get("ExpiryDateTime"), _tz)
                 data[SENSOR_PH_STATUS] = (
                     "selection_pending"
                     if expiry_dt and now_utc < expiry_dt
@@ -514,6 +542,7 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             data[SENSOR_PH_START]              = None
             data[SENSOR_PH_END]                = None
             data[SENSOR_PH_SELECTION_DEADLINE] = None
+            data[SENSOR_PH_FIRST_SLOT_START]   = None
 
         return data
 

@@ -397,8 +397,9 @@ Returns current and upcoming Power Hour events for the authenticated account.
 - `TimeslotAccepted` is `null` when the customer has not yet selected a timeslot
 - `TimeslotAccepted.StartDateTime` and `TimeslotAccepted.EndDateTime` define the exact free-power window — these map to the `Power Hour Start` and `Power Hour End` HA sensors
 - `OfferExpiryDateTime` is typically 5 minutes before the last available timeslot starts
-- `TimeslotAll` offers multiple days and time windows to choose from; each slot has its own `ExpiryDateTime` (5 min before that slot starts)
-- The event-level `StartDateTime` is when the event was **announced**, not when free power starts — the timeslot `StartDateTime` is what matters for determining the free-power window
+- `TimeslotAll` offers multiple days and time windows to choose from; each slot has its own `ExpiryDateTime` (5 min before that slot starts) — a slot stops being bookable once its own `ExpiryDateTime` passes, independent of the event-level `OfferExpiryDateTime`
+- The integration consumes `TimeslotAll` for the `Power Hour First Slot Start` sensor (earliest still-bookable slot, filtered by per-slot `ExpiryDateTime`) and, while no slot is accepted, for the `Power Hour Start`/`End` fallback (earliest slot start → latest slot end)
+- The event-level `StartDateTime` is when the event was **announced**, not when free power starts — the timeslot `StartDateTime` is what matters for determining the free-power window. Do not surface it as a "start" to users (issue #11); it is only used as a last-resort fallback when `TimeslotAll` is empty
 
 ---
 

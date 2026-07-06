@@ -37,6 +37,7 @@ from .const import (
     SENSOR_OVERDUE_AMOUNT,
     SENSOR_PH_END,
     SENSOR_PH_EVENT_NAME,
+    SENSOR_PH_FIRST_SLOT_START,
     SENSOR_PH_SELECTION_DEADLINE,
     SENSOR_PH_START,
     SENSOR_PH_STATUS,
@@ -384,6 +385,15 @@ SENSOR_DESCRIPTIONS: tuple[AuroraSensorEntityDescription, ...] = (
         device_class=SensorDeviceClass.TIMESTAMP,
         state_class=None,
         icon="mdi:timer-sand",
+    ),
+    AuroraSensorEntityDescription(
+        key=SENSOR_PH_FIRST_SLOT_START,
+        name="Power Hour First Slot Start",
+        data_key="powerhour_first_slot_start",
+        native_unit_of_measurement=None,
+        device_class=SensorDeviceClass.TIMESTAMP,
+        state_class=None,
+        icon="mdi:clock-plus-outline",
     ),
     AuroraSensorEntityDescription(
         key=SENSOR_PH_TOTAL_SAVINGS,

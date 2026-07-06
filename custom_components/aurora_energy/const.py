@@ -60,6 +60,7 @@ SENSOR_PH_START              = "powerhour_start"
 SENSOR_PH_END                = "powerhour_end"
 SENSOR_PH_SELECTION_DEADLINE = "powerhour_selection_deadline"
 SENSOR_PH_TOTAL_SAVINGS      = "powerhour_total_savings"
+SENSOR_PH_FIRST_SLOT_START   = "powerhour_first_slot_start"
 
 # Group A: extra fields already in /customers/current response
 SENSOR_BILL_DUE          = "bill_due_date"

@@ -81,9 +81,10 @@ If setup succeeds, a device called **Aurora Energy** will appear with all sensor
 | T93 Tariff Period | Current tariff period: `peak` or `off_peak` | — |
 | Power Hour Status | Current Power Hours state (see below) | — |
 | Power Hour Event | Name of the upcoming or active Power Hours event | — |
-| Power Hour Start | Start of your accepted free-power timeslot | — |
-| Power Hour End | End of your accepted free-power timeslot | — |
+| Power Hour Start | Start of your accepted timeslot; before you book, start of the earliest offered slot | — |
+| Power Hour End | End of your accepted timeslot; before you book, end of the latest offered slot | — |
 | Power Hour Selection Deadline | Deadline to select a timeslot | — |
+| Power Hour First Slot Start | Start of the earliest timeslot you can still book — book before this to get first pick | — |
 | Power Hour Total Savings | Lifetime savings from Power Hours events | AUD |
 | Billing Period Usage | Total kWh consumed in current billing cycle | kWh |
 | Billing Period Cost | Total cost in current billing cycle | AUD |
@@ -98,9 +99,11 @@ If setup succeeds, a device called **Aurora Energy** will appear with all sensor
 | Value | Meaning |
 |-------|---------|
 | `no_event` | No upcoming Power Hours event |
-| `selection_pending` | An event has been announced but you haven't selected a timeslot yet — act before the **Selection Deadline** |
+| `selection_pending` | An event has been announced but you haven't selected a timeslot yet — act before the **Selection Deadline**. **Power Hour Start/End** show the overall bookable window (earliest offered slot start → latest offered slot end), and **Power Hour First Slot Start** shows the next slot you can still book |
 | `confirmed` | You've accepted a timeslot — free electricity starts at **Power Hour Start** and ends at **Power Hour End** |
 | `active` | Your Power Hours timeslot is currently running — electricity is free right now |
+
+> **Dashboard tip:** to show "Power Hours available — book before X", combine **Power Hour First Slot Start** with **Power Hour Selection Deadline** while status is `selection_pending`. Individual slots close ~5 minutes before they start, so the first-slot sensor advances to the next bookable slot as earlier ones lapse (refreshed on the hourly poll).
 
 > **Note:** The coordinator evaluates the start and end timestamps on every poll and sets the status to `active` directly — your dashboard can use a simple `condition: state` check rather than comparing timestamps in a template. Because polling is aligned to the clock hour, status transitions are reflected within ~5 seconds of the event start or end time.
 
