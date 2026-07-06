@@ -184,6 +184,8 @@ On first login the integration exchanges your credentials for a longer-lived tok
 
 If your session fully expires (HA will show a notification), click through the re-authentication flow — the same login link approach as initial setup. Once re-authentication succeeds the new tokens are immediately saved and the integration reloads.
 
+You must re-authenticate with the **same Aurora+ account** the integration was originally set up with — logging in with a different account is rejected (this prevents another account's data being mixed into your existing sensors and Energy Dashboard statistics). To switch accounts, remove the integration and add it again.
+
 After re-authenticating, restart Home Assistant to trigger the automatic backfill and recover any Energy Dashboard data that was missed while authentication was broken.
 
 ---

@@ -30,7 +30,8 @@
     },
     "abort": {
       "already_configured": "Aurora Energy is already configured.",
-      "reauth_successful": "Re-authentication was successful. Your Aurora+ data will resume updating."
+      "reauth_successful": "Re-authentication was successful. Your Aurora+ data will resume updating.",
+      "wrong_account": "The Aurora+ account you logged in with does not match the account this integration was set up with. Re-authenticate with the original account, or remove and re-add the integration to switch accounts."
     }
   }
 }

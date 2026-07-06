@@ -241,6 +241,14 @@ class AuroraConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     _LOGGER.exception("Unexpected error during Aurora+ re-authentication")
                     errors["base"] = "unknown"
                 else:
+                    # Reject tokens for a different Aurora+ account — silently
+                    # switching accounts would mix the new account's data into
+                    # the existing entities and injected statistics.
+                    if (
+                        self._reauth_entry.unique_id
+                        and service_agreement_id != self._reauth_entry.unique_id
+                    ):
+                        return self.async_abort(reason="wrong_account")
                     self.hass.config_entries.async_update_entry(
                         self._reauth_entry,
                         data={

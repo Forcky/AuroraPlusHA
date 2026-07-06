@@ -6,3 +6,6 @@ __pycache__/
 dist/
 build/
 .DS_Store
+
+# Local Claude Code settings — may contain MCP server credentials (e.g. HA access token)
+.claude/settings.local.json

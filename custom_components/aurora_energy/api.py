@@ -295,9 +295,9 @@ class AuroraApiClient:
                 if resp.status == 401:
                     if attempt == 0:
                         _LOGGER.debug(
-                            "Aurora 401 from %s (token prefix: %s...) — refreshing token",
+                            "Aurora 401 from %s (access token length: %d) — refreshing token",
                             url,
-                            (self._access_token or "")[:20],
+                            len(self._access_token or ""),
                         )
                         await self.async_refresh_token()
                         continue
