@@ -224,6 +224,21 @@ _STAT_METADATA: dict[str, StatisticMetaData] = {
 }
 
 
+def _t93_component(summary: dict[str, Any], tariff: str) -> Any:
+    """Return a T93 kWh component, treating a missing key as 0 when its sibling exists.
+
+    Aurora omits the T93PEAK key from SummaryTotals on weekend days (no peak
+    window exists Sat/Sun), which would otherwise surface as "unknown" instead
+    of the correct 0 kWh (issue #14). The sibling check keeps genuinely missing
+    data (empty summary, non-T93 account) as None. Applied to kWh values only —
+    dollar values are reported exactly as Aurora returns them.
+    """
+    if tariff in summary:
+        return summary[tariff]
+    sibling = TARIFF_T93OFFPEAK if tariff == TARIFF_T93PEAK else TARIFF_T93PEAK
+    return 0.0 if sibling in summary else None
+
+
 def _distribute_day_dollars_by_kwh(
     hourly: list[dict[str, Any]],
     summary_totals: Optional[dict[str, Any]],
@@ -449,10 +464,13 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         data["t31_kwh"] = kwh_summary.get(TARIFF_T31)
         data["t31_dollars"] = dollar_summary.get(TARIFF_T31)
 
-        # T93 Time-of-Use tariff (peak / off-peak) — None for non-T93 accounts
-        data["t93peak_kwh"]        = kwh_summary.get(TARIFF_T93PEAK)
+        # T93 Time-of-Use tariff (peak / off-peak) — None for non-T93 accounts.
+        # kWh components use _t93_component so weekend days (no peak window,
+        # T93PEAK key omitted by Aurora) read 0 instead of unknown (#14).
+        # Dollar fields intentionally stay as-reported (None when omitted).
+        data["t93peak_kwh"]        = _t93_component(kwh_summary, TARIFF_T93PEAK)
         data["t93peak_dollars"]    = dollar_summary.get(TARIFF_T93PEAK)
-        data["t93offpeak_kwh"]     = kwh_summary.get(TARIFF_T93OFFPEAK)
+        data["t93offpeak_kwh"]     = _t93_component(kwh_summary, TARIFF_T93OFFPEAK)
         data["t93offpeak_dollars"] = dollar_summary.get(TARIFF_T93OFFPEAK)
 
         # Solar feed-in — T140 tariff (negative dollars = earnings from export)

@@ -527,6 +527,8 @@ Tariff keys appear as keys within `KilowattHourUsage` and `DollarValueUsage` obj
 
 **Important:** `Other` in `DollarValueUsage` is the **supply charge** (daily fixed fee), not solar. It comes from `NonMeteredUsageRecords` and appears in the summary total but not in individual hour records.
 
+**Important:** On weekend days there is no T93 peak window, and Aurora **omits the `T93PEAK` key** from `SummaryTotals` entirely instead of reporting 0. The integration treats a missing T93 kWh component as 0 when its sibling (`T93OFFPEAK`/`T93PEAK`) is present in the same summary (issue #14); dollar components are passed through as-reported.
+
 ---
 
 ## Dates and timezones
@@ -565,6 +567,7 @@ Querying with `index=-1` returns the most recent available completed period. `in
 | `KilowattHourUsageAEST` | This field exists on all records but has been observed as always `null`. Its purpose is unknown. |
 | Dollar data split | `DollarValueUsage` is only populated on the Day-level record, not on individual Hour records. kWh data is only on Hour records. |
 | `index=0` date is UTC, not local | `StartDate` on an `index=0` response is a UTC timestamp representing midnight Hobart-local time. Comparing the raw `YYYY-MM-DD` prefix to today's date will fail during Hobart business hours (before ~14:00–15:00 UTC). Convert to `Australia/Hobart` local time before comparing. |
+| `T93PEAK` absent on weekends | On weekend days `SummaryTotals` omits the `T93PEAK` key entirely (from both `KilowattHourUsage` and `DollarValueUsage`) rather than reporting 0 — no peak window exists Sat/Sun. Absence alongside a present `T93OFFPEAK` sibling means 0, not missing data. |
 
 ---
 

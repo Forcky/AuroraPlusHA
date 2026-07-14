@@ -241,6 +241,7 @@ The integration backfills up to 7 days of missing data automatically on every HA
 ### Sensors show "Unknown"
 - **Estimated Balance** and **Usage Days Remaining** may be `null` for some account types — this is normal behaviour and not an error.
 - **Usage sensors** only update once per day when Aurora releases meter data (typically 8–9am AEST). They will show `Unknown` or yesterday's value until then.
+- **T93 Peak Usage** reports **0 kWh** for weekend days — there is no peak window on Saturday or Sunday, so zero is the correct value. **T93 Peak Cost** still shows `Unknown` on those days because Aurora omits the dollar figure entirely from its response.
 
 ### Power Hour sensors show "Unknown"
 Power Hour sensors show `Unknown` when no Power Hours event is currently active or upcoming — this is normal. The **Power Hour Status** sensor will show `no_event` once the coordinator has fetched successfully at least once. If it remains `Unknown` after the first hourly refresh, check **Settings → System → Logs** and filter by `aurora_energy` for warnings.
