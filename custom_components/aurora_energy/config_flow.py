@@ -244,13 +244,39 @@ class AuroraConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     # Reject tokens for a different Aurora+ account — silently
                     # switching accounts would mix the new account's data into
                     # the existing entities and injected statistics.
-                    if (
+                    #
+                    # Account identity is the CustomerID, NOT the
+                    # ServiceAgreementID. An SA ID belongs to a premise/contract
+                    # and legitimately changes when the customer moves premises or
+                    # re-contracts, and closed premises keep a stale SA ID
+                    # (see API.md). The coordinator already overwrites the client's
+                    # SA ID from the active premise on every poll, so an entry's
+                    # unique_id can drift from the live SA ID on the very same
+                    # account — comparing against it produced false "wrong account"
+                    # aborts during re-auth.
+                    existing_customer_id = self._reauth_entry.data.get(CONF_CUSTOMER_ID)
+                    if existing_customer_id:
+                        if str(customer_id) != str(existing_customer_id):
+                            return self.async_abort(reason="wrong_account")
+                    elif (
                         self._reauth_entry.unique_id
                         and service_agreement_id != self._reauth_entry.unique_id
                     ):
+                        # No stored CustomerID to compare against — fall back to
+                        # the old SA ID check rather than accepting anything.
                         return self.async_abort(reason="wrong_account")
+
+                    if service_agreement_id != self._reauth_entry.unique_id:
+                        # Debug level only — the SA ID is an account identifier
+                        # and should not land in default-level logs.
+                        _LOGGER.debug(
+                            "Aurora+: ServiceAgreementID changed for this account "
+                            "— updating the config entry"
+                        )
+
                     self.hass.config_entries.async_update_entry(
                         self._reauth_entry,
+                        unique_id=service_agreement_id,
                         data={
                             **self._reauth_entry.data,
                             CONF_SERVICE_AGREEMENT_ID: service_agreement_id,

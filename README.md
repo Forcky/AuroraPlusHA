@@ -189,6 +189,8 @@ If your session fully expires (HA will show a notification), click through the r
 
 You must re-authenticate with the **same Aurora+ account** the integration was originally set up with — logging in with a different account is rejected (this prevents another account's data being mixed into your existing sensors and Energy Dashboard statistics). To switch accounts, remove the integration and add it again.
 
+The account is matched on your Aurora+ `CustomerID`. If you move premises or re-contract, your `ServiceAgreementID` changes but your `CustomerID` does not, so re-authentication still succeeds and the new `ServiceAgreementID` is saved automatically. (Versions 1.0.7–1.0.8 matched on `ServiceAgreementID` and could reject the correct account — see [Troubleshooting](#troubleshooting).)
+
 After re-authenticating, restart Home Assistant to trigger the automatic backfill and recover any Energy Dashboard data that was missed while authentication was broken.
 
 ---
@@ -234,6 +236,13 @@ The login was rejected by Aurora+. Try again with a fresh login link (reload the
 
 ### Re-authentication prompt reappears immediately after submitting a new token
 Ensure you are running the latest version of this integration. Earlier versions had a bug where the new tokens were not saved after re-auth, causing the integration to immediately fail again with the old expired credentials on reload.
+
+### "The Aurora+ customer account you logged in with does not match…" during re-auth
+Re-auth refuses tokens belonging to a different Aurora+ account so that another account's data can't be mixed into your existing entities and statistics.
+
+If you *are* logging in with the correct account, upgrade to **1.0.9 or later**. Versions 1.0.7–1.0.8 compared the `ServiceAgreementID`, which is tied to a premise/contract rather than to you — it changes when you move premises or re-contract, and the integration itself already switches to the active premise's SA ID on every poll. That caused false rejections on the correct account. From 1.0.9 the check uses the `CustomerID` instead, and a changed `ServiceAgreementID` is simply written back to the config entry.
+
+If you cannot upgrade immediately, stop Home Assistant, edit `.storage/core.config_entries`, find the `aurora_energy` entry and set its `"unique_id"` to `null`, then start HA and re-authenticate.
 
 ### Energy Dashboard is missing data after a period of downtime or broken authentication
 The integration backfills up to 7 days of missing data automatically on every HA restart. After resolving the underlying issue (e.g. re-authenticating), **restart Home Assistant** to trigger the backfill. Data older than 7 days cannot be recovered as the Aurora+ API does not expose it.
