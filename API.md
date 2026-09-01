@@ -91,11 +91,11 @@ User-Agent: python/auroraplus
 **Request body:**
 ```json
 {
-  "token": "<refresh_token>"
+  "RefreshToken": "<refresh_token>"
 }
 ```
 
-**Request cookie:**
+**Request cookie (optional fallback):**
 ```
 RefreshToken=<refresh_cookie_value>
 ```
@@ -103,9 +103,48 @@ RefreshToken=<refresh_cookie_value>
 **Response (200):** Same structure as `/LoginToken`
 
 **Notes:**
+- The body key is `RefreshToken` (PascalCase). This is verified against the Aurora+
+  Android app v4.0.4, which sends only this body with `Accept` + `Content-Type` headers —
+  no `Authorization` header and no cookies at all.
+- **Do not send `{"token": ...}`.** It binds to null server-side, and the request then
+  succeeds only on the strength of the `RefreshToken` cookie. That cookie carries a fixed
+  absolute expiry (~30 days) which token rotation does not extend, so the session dies
+  about monthly no matter how often you refresh. This was the cause of the recurring
+  re-auth prompts.
 - A 401/403 response means the refresh token has expired — full re-authentication required
 - The response may include an updated `refreshToken` — always store the latest value
 - The `RefreshToken` cookie in the response may also be updated — store the latest value
+
+**Refresh cadence used by the native app:** on every cold start, and on every foreground
+where more than 50 minutes (`3_000_000` ms) have elapsed since the last successful refresh.
+
+---
+
+### `POST /api/identity/biometricToggle`
+
+Registers or de-registers the device as a biometric-login device. Re-issues a fresh
+token pair as a side effect. Used by the Android app; not currently used by this
+integration, but documented here since it is the only other identity endpoint the app calls.
+
+**Request headers:**
+```
+Authorization: bearer <access_token>
+Content-Type: application/json
+```
+
+**Request body:**
+```json
+{
+  "DeviceInfo": { "IsBiometric": true },
+  "RefreshToken": "<refresh_token>"
+}
+```
+
+**Response (200):** `{ "accessToken": "...", "refreshToken": "..." }`
+
+**Note:** Biometrics in the app is a *local* prompt gate only. The refresh token is stored
+in the Android Keystore with `AES_GCM_NO_AUTH` (no user-authentication binding), so
+enabling biometrics does not change token lifetime or bind the token to the TPM.
 
 ---
 

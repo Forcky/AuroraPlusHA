@@ -132,9 +132,14 @@ class AuroraApiClient:
                 cookies["RefreshToken"] = self._refresh_cookie
 
             try:
+                # Body key must be "RefreshToken" (PascalCase) — this is what the
+                # Aurora+ Android app sends. A body of {"token": ...} binds to null
+                # server-side and silently falls back to the RefreshToken cookie,
+                # which carries a fixed ~30-day expiry that rotation does not extend.
+                # The cookie is still sent as a fallback.
                 async with self._session.post(
                     url,
-                    json={"token": self._refresh_token},
+                    json={"RefreshToken": self._refresh_token},
                     cookies=cookies,
                     headers={"Accept": "application/json", "User-Agent": "python/auroraplus"},
                 ) as resp:

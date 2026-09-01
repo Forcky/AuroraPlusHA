@@ -183,7 +183,9 @@ Aurora's API only exposes dollar values at the day level, so per-hour cost stati
 
 ## Re-authentication
 
-On first login the integration exchanges your credentials for a longer-lived token pair. Under normal operation you will not need to re-authenticate for many months.
+On first login the integration exchanges your credentials for a longer-lived token pair. The refresh token is rotated on every successful refresh, so under normal operation you will not need to re-authenticate.
+
+> **Fixed in 1.0.10:** earlier versions sent the refresh token under the wrong JSON key. The request still succeeded — but only on the strength of a session cookie that carries a fixed ~30-day expiry which token rotation does not extend. The result was a forced re-authentication roughly once a month regardless of how healthy the integration otherwise looked. The request now matches what the official Aurora+ mobile app sends. **Re-authenticate once after upgrading** to seed a fresh token chain.
 
 If your session fully expires (HA will show a notification), click through the re-authentication flow — the same login link approach as initial setup. Once re-authentication succeeds the new tokens are immediately saved and the integration reloads.
 
@@ -233,6 +235,10 @@ Make sure you copied the complete URL from your browser's address bar after the 
 
 ### "Authentication failed" error during setup
 The login was rejected by Aurora+. Try again with a fresh login link (reload the setup step) and ensure you ticked **Keep me logged in** when logging in.
+
+### Re-authentication is required roughly once a month
+
+Fixed in 1.0.10. Upgrade, then re-authenticate once to seed a fresh token chain. See [Re-authentication](#re-authentication) for the detail.
 
 ### Re-authentication prompt reappears immediately after submitting a new token
 Ensure you are running the latest version of this integration. Earlier versions had a bug where the new tokens were not saved after re-auth, causing the integration to immediately fail again with the old expired credentials on reload.
