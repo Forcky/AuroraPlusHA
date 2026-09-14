@@ -267,6 +267,9 @@ Power Hour sensors show `Unknown` when no Power Hours event is currently active 
 - This is expected before ~8–9am AEST — Aurora has not yet released that day's data.
 - If it persists past midday, check **Settings → System → Logs** and filter by `aurora_energy`.
 
+### Recorder warns "state is not strictly increasing"
+Fixed in 1.0.11. The usage and cost sensors report a **period total** — the previous day's figure, or the current billing cycle's — not a running meter, so the value drops back down whenever the period rolls over. They were previously declared as `total_increasing`, which made Home Assistant log `state class total_increasing, but its state is not strictly increasing` at the day rollover whenever the new day started less than 10% below the previous one. They are now `total` sensors anchored to a `last_reset` of the period start, which is how Home Assistant expects a resetting total to be modelled. The Energy Dashboard is unaffected either way — it is fed by the integration's own long-term statistics, not these entities.
+
 ### No logs from the integration
 Ensure the following is in your `configuration.yaml` and that you have performed a full HA restart (not just a reload):
 ```yaml

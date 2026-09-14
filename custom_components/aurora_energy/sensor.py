@@ -66,6 +66,10 @@ class AuroraSensorEntityDescription(SensorEntityDescription):
     """Sensor description extended with a coordinator data key."""
 
     data_key: str = ""
+    # Coordinator data key holding the start of the period this value covers.
+    # Set on TOTAL sensors whose value resets each day / billing cycle so the
+    # recorder treats the drop as a reset rather than a decreasing total (#15).
+    last_reset_key: Optional[str] = None
 
 
 SENSOR_DESCRIPTIONS: tuple[AuroraSensorEntityDescription, ...] = (
@@ -130,9 +134,10 @@ SENSOR_DESCRIPTIONS: tuple[AuroraSensorEntityDescription, ...] = (
         key=SENSOR_TOTAL_KWH,
         name="Daily Total Usage",
         data_key="total_kwh",
+        last_reset_key="start_date",
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         device_class=SensorDeviceClass.ENERGY,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
         icon="mdi:meter-electric",
         suggested_display_precision=3,
     ),
@@ -140,6 +145,7 @@ SENSOR_DESCRIPTIONS: tuple[AuroraSensorEntityDescription, ...] = (
         key=SENSOR_TOTAL_DOLLARS,
         name="Daily Total Cost",
         data_key="total_dollars",
+        last_reset_key="start_date",
         native_unit_of_measurement="AUD",
         device_class=SensorDeviceClass.MONETARY,
         state_class=SensorStateClass.TOTAL,
@@ -151,9 +157,10 @@ SENSOR_DESCRIPTIONS: tuple[AuroraSensorEntityDescription, ...] = (
         key=SENSOR_T41_KWH,
         name="T41 Heating Usage",
         data_key="t41_kwh",
+        last_reset_key="start_date",
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         device_class=SensorDeviceClass.ENERGY,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
         icon="mdi:radiator",
         suggested_display_precision=3,
         entity_registry_enabled_default=False,
@@ -162,6 +169,7 @@ SENSOR_DESCRIPTIONS: tuple[AuroraSensorEntityDescription, ...] = (
         key=SENSOR_T41_DOLLARS,
         name="T41 Heating Cost",
         data_key="t41_dollars",
+        last_reset_key="start_date",
         native_unit_of_measurement="AUD",
         device_class=SensorDeviceClass.MONETARY,
         state_class=SensorStateClass.TOTAL,
@@ -174,9 +182,10 @@ SENSOR_DESCRIPTIONS: tuple[AuroraSensorEntityDescription, ...] = (
         key=SENSOR_T31_KWH,
         name="T31 General Usage",
         data_key="t31_kwh",
+        last_reset_key="start_date",
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         device_class=SensorDeviceClass.ENERGY,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
         icon="mdi:power-plug",
         suggested_display_precision=3,
         entity_registry_enabled_default=False,
@@ -185,6 +194,7 @@ SENSOR_DESCRIPTIONS: tuple[AuroraSensorEntityDescription, ...] = (
         key=SENSOR_T31_DOLLARS,
         name="T31 General Cost",
         data_key="t31_dollars",
+        last_reset_key="start_date",
         native_unit_of_measurement="AUD",
         device_class=SensorDeviceClass.MONETARY,
         state_class=SensorStateClass.TOTAL,
@@ -197,9 +207,10 @@ SENSOR_DESCRIPTIONS: tuple[AuroraSensorEntityDescription, ...] = (
         key=SENSOR_T93PEAK_KWH,
         name="T93 Peak Usage",
         data_key="t93peak_kwh",
+        last_reset_key="start_date",
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         device_class=SensorDeviceClass.ENERGY,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
         icon="mdi:lightning-bolt",
         suggested_display_precision=3,
         entity_registry_enabled_default=False,
@@ -208,6 +219,7 @@ SENSOR_DESCRIPTIONS: tuple[AuroraSensorEntityDescription, ...] = (
         key=SENSOR_T93PEAK_DOLLARS,
         name="T93 Peak Cost",
         data_key="t93peak_dollars",
+        last_reset_key="start_date",
         native_unit_of_measurement="AUD",
         device_class=SensorDeviceClass.MONETARY,
         state_class=SensorStateClass.TOTAL,
@@ -219,9 +231,10 @@ SENSOR_DESCRIPTIONS: tuple[AuroraSensorEntityDescription, ...] = (
         key=SENSOR_T93OFFPEAK_KWH,
         name="T93 Off-Peak Usage",
         data_key="t93offpeak_kwh",
+        last_reset_key="start_date",
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         device_class=SensorDeviceClass.ENERGY,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
         icon="mdi:lightning-bolt-outline",
         suggested_display_precision=3,
         entity_registry_enabled_default=False,
@@ -230,6 +243,7 @@ SENSOR_DESCRIPTIONS: tuple[AuroraSensorEntityDescription, ...] = (
         key=SENSOR_T93OFFPEAK_DOLLARS,
         name="T93 Off-Peak Cost",
         data_key="t93offpeak_dollars",
+        last_reset_key="start_date",
         native_unit_of_measurement="AUD",
         device_class=SensorDeviceClass.MONETARY,
         state_class=SensorStateClass.TOTAL,
@@ -281,9 +295,10 @@ SENSOR_DESCRIPTIONS: tuple[AuroraSensorEntityDescription, ...] = (
         key=SENSOR_BP_KWH,
         name="Billing Period Usage",
         data_key=SENSOR_BP_KWH,
+        last_reset_key="billing_period_start",
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         device_class=SensorDeviceClass.ENERGY,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
         icon="mdi:calendar-month",
         suggested_display_precision=3,
     ),
@@ -291,6 +306,7 @@ SENSOR_DESCRIPTIONS: tuple[AuroraSensorEntityDescription, ...] = (
         key=SENSOR_BP_COST,
         name="Billing Period Cost",
         data_key=SENSOR_BP_COST,
+        last_reset_key="billing_period_start",
         native_unit_of_measurement="AUD",
         device_class=SensorDeviceClass.MONETARY,
         state_class=SensorStateClass.TOTAL,
@@ -301,9 +317,10 @@ SENSOR_DESCRIPTIONS: tuple[AuroraSensorEntityDescription, ...] = (
         key=SENSOR_BP_SOLAR_KWH,
         name="Billing Period Solar Feed-in",
         data_key=SENSOR_BP_SOLAR_KWH,
+        last_reset_key="billing_period_start",
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         device_class=SensorDeviceClass.ENERGY,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
         icon="mdi:solar-panel",
         suggested_display_precision=3,
     ),
@@ -311,6 +328,7 @@ SENSOR_DESCRIPTIONS: tuple[AuroraSensorEntityDescription, ...] = (
         key=SENSOR_BP_SOLAR_EARNINGS,
         name="Billing Period Solar Earnings",
         data_key=SENSOR_BP_SOLAR_EARNINGS,
+        last_reset_key="billing_period_start",
         native_unit_of_measurement="AUD",
         device_class=SensorDeviceClass.MONETARY,
         state_class=SensorStateClass.TOTAL,
@@ -410,9 +428,10 @@ SENSOR_DESCRIPTIONS: tuple[AuroraSensorEntityDescription, ...] = (
         key=SENSOR_SOLAR_KWH,
         name="Solar Feed-in",
         data_key="solar_feedin_kwh",
+        last_reset_key="start_date",
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         device_class=SensorDeviceClass.ENERGY,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
         icon="mdi:solar-panel",
         suggested_display_precision=3,
     ),
@@ -420,6 +439,7 @@ SENSOR_DESCRIPTIONS: tuple[AuroraSensorEntityDescription, ...] = (
         key=SENSOR_SOLAR_DOLLARS,
         name="Solar Feed-in Earnings",
         data_key="solar_feedin_dollars",
+        last_reset_key="start_date",
         native_unit_of_measurement="AUD",
         device_class=SensorDeviceClass.MONETARY,
         state_class=SensorStateClass.TOTAL,
@@ -477,6 +497,23 @@ class AuroraSensor(CoordinatorEntity[AuroraCoordinator], SensorEntity):
         if isinstance(val, bool):
             return "active" if val else "inactive"
         return val
+
+    @property
+    def last_reset(self) -> Optional[datetime.datetime]:
+        """Start of the period the current value covers.
+
+        Aurora reports daily and billing-cycle totals, not running meters — the
+        value drops back towards zero every time the period rolls over. Anchoring
+        these TOTAL sensors to a last_reset lets the recorder treat that drop as
+        a reset; without it the day rollover logs "state is not strictly
+        increasing" whenever the new day starts lower than the last (issue #15).
+        """
+        key = self.entity_description.last_reset_key
+        if not key or self.coordinator.data is None:
+            return None
+        raw = self.coordinator.data.get(key)
+        parsed = dt_util.parse_datetime(raw) if raw else None
+        return dt_util.as_utc(parsed) if parsed else None
 
     @property
     def available(self) -> bool:

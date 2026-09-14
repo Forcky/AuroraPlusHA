@@ -576,6 +576,9 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         t140_bp = bp_dollars.get(TARIFF_T140)
         data[SENSOR_BP_SOLAR_KWH]      = bp_kwh.get(TARIFF_T140)
         data[SENSOR_BP_SOLAR_EARNINGS] = abs(t140_bp) if t140_bp is not None else None
+        # Anchor for the billing-period sensors' last_reset — these totals drop
+        # back to zero when Aurora rolls the cycle over (issue #15).
+        data["billing_period_start"] = (billing_period or {}).get("StartDate")
 
         # Group C: payment status (/payment/activepayment/{accountNumber})
         data[SENSOR_DIRECT_DEBIT]  = (payment_status or {}).get("IsDirectDebitActive")
