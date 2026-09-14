@@ -110,6 +110,94 @@ def _parse_hobart_naive(
     return dt_util.as_utc(naive.replace(tzinfo=tz))
 
 
+# Power Hour relevance ranks — lower sorts first when choosing which of the
+# events returned by /powerhour/upcoming-active drives the sensors (issue #16).
+_PH_RANK_ACTIVE    = 0
+_PH_RANK_CONFIRMED = 1
+_PH_RANK_PENDING   = 2
+
+
+def _summarise_powerhour_event(
+    event: dict[str, Any],
+    now_utc: datetime.datetime,
+    tz: zoneinfo.ZoneInfo,
+) -> Optional[dict[str, Any]]:
+    """Reduce one Power Hour event to the fields the sensors need.
+
+    Returns None when the event is spent — its offer has closed and any
+    accepted slot has already finished — so callers can drop it from
+    consideration. Otherwise returns a dict carrying a ``rank``/``sort_key``
+    pair used to choose the most relevant event, plus the parsed datetimes.
+    """
+    offer_expiry = _parse_hobart_naive(event.get("OfferExpiryDateTime"), tz)
+
+    # Parse all offered timeslots once — used for the first-bookable-slot
+    # sensor and the selection_pending Start/End fallback. Each slot lapses
+    # individually at its own ExpiryDateTime (~5 min before the slot starts),
+    # so "first slot" means the earliest still-bookable one.
+    slot_starts: list[datetime.datetime] = []
+    slot_ends: list[datetime.datetime] = []
+    first_bookable: Optional[datetime.datetime] = None
+    for offered in event.get("TimeslotAll") or []:
+        s_start = _parse_hobart_naive(offered.get("StartDateTime"), tz)
+        if s_start is None:
+            continue
+        s_end = _parse_hobart_naive(offered.get("EndDateTime"), tz)
+        s_expiry = _parse_hobart_naive(offered.get("ExpiryDateTime"), tz)
+        slot_starts.append(s_start)
+        if s_end:
+            slot_ends.append(s_end)
+        bookable = s_expiry > now_utc if s_expiry else s_start > now_utc
+        if bookable and (first_bookable is None or s_start < first_bookable):
+            first_bookable = s_start
+
+    summary: dict[str, Any] = {
+        "name": event.get("EventName"),
+        "offer_expiry": offer_expiry,
+        "first_bookable": first_bookable,
+    }
+
+    accepted = event.get("TimeslotAccepted")
+    if accepted:
+        start_dt = _parse_hobart_naive(accepted.get("StartDateTime"), tz)
+        end_dt   = _parse_hobart_naive(accepted.get("EndDateTime"), tz)
+        summary["start"] = start_dt
+        summary["end"]   = end_dt
+        if start_dt and end_dt and start_dt <= now_utc <= end_dt:
+            summary["status"]   = "active"
+            summary["rank"]     = _PH_RANK_ACTIVE
+            summary["sort_key"] = start_dt
+            return summary
+        # A booked slot that has not run yet still outranks any open offer.
+        if end_dt is not None and end_dt > now_utc:
+            summary["status"]   = "confirmed"
+            summary["rank"]     = _PH_RANK_CONFIRMED
+            summary["sort_key"] = start_dt or end_dt
+            return summary
+        # Slot already finished — the event is spent.
+        return None
+
+    # No slot confirmed yet — show the bookable window (earliest slot start →
+    # latest slot end). The event-level StartDateTime is the announcement
+    # time, not a power window (issue #11), so it is only a last resort when
+    # the API returns no timeslots.
+    if slot_starts:
+        summary["start"] = min(slot_starts)
+        summary["end"]   = max(slot_ends) if slot_ends else None
+    else:
+        summary["start"] = _parse_hobart_naive(event.get("StartDateTime"), tz)
+        summary["end"]   = offer_expiry
+
+    if offer_expiry is None or now_utc >= offer_expiry:
+        # Offer closed without a selection — the event is spent.
+        return None
+
+    summary["status"]   = "selection_pending"
+    summary["rank"]     = _PH_RANK_PENDING
+    summary["sort_key"] = first_bookable or offer_expiry
+    return summary
+
+
 # StatisticMetaData for each external statistic registered with the recorder.
 # source must equal DOMAIN for external statistics.
 _STAT_METADATA: dict[str, StatisticMetaData] = {
@@ -500,60 +588,28 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # Power Hours
         _tz = zoneinfo.ZoneInfo(TZ_HOBART)
-        if powerhour_upcoming:
-            event = powerhour_upcoming[0]
-            now_utc = dt_util.utcnow()
-            data[SENSOR_PH_EVENT_NAME] = event.get("EventName")
-            expiry_dt = _parse_hobart_naive(event.get("OfferExpiryDateTime"), _tz)
-            data[SENSOR_PH_SELECTION_DEADLINE] = expiry_dt
-
-            # Parse all offered timeslots once — used for the first-bookable-slot
-            # sensor and the selection_pending Start/End fallback. Each slot
-            # lapses individually at its own ExpiryDateTime (~5 min before the
-            # slot starts), so "first slot" means the earliest still-bookable one.
-            slot_starts: list[datetime.datetime] = []
-            slot_ends: list[datetime.datetime] = []
-            first_bookable: Optional[datetime.datetime] = None
-            for offered in event.get("TimeslotAll") or []:
-                s_start = _parse_hobart_naive(offered.get("StartDateTime"), _tz)
-                if s_start is None:
-                    continue
-                s_end = _parse_hobart_naive(offered.get("EndDateTime"), _tz)
-                s_expiry = _parse_hobart_naive(offered.get("ExpiryDateTime"), _tz)
-                slot_starts.append(s_start)
-                if s_end:
-                    slot_ends.append(s_end)
-                bookable = s_expiry > now_utc if s_expiry else s_start > now_utc
-                if bookable and (first_bookable is None or s_start < first_bookable):
-                    first_bookable = s_start
-            data[SENSOR_PH_FIRST_SLOT_START] = first_bookable
-
-            slot = event.get("TimeslotAccepted")
-            if slot:
-                start_dt = _parse_hobart_naive(slot.get("StartDateTime"), _tz)
-                end_dt   = _parse_hobart_naive(slot.get("EndDateTime"), _tz)
-                data[SENSOR_PH_START] = start_dt
-                data[SENSOR_PH_END]   = end_dt
-                if start_dt and end_dt and start_dt <= now_utc <= end_dt:
-                    data[SENSOR_PH_STATUS] = "active"
-                else:
-                    data[SENSOR_PH_STATUS] = "confirmed"
-            else:
-                # No slot confirmed yet — show the bookable window (earliest
-                # slot start → latest slot end). The event-level StartDateTime
-                # is the announcement time, not a power window (issue #11), so
-                # it is only a last resort when the API returns no timeslots.
-                if slot_starts:
-                    data[SENSOR_PH_START] = min(slot_starts)
-                    data[SENSOR_PH_END]   = max(slot_ends) if slot_ends else None
-                else:
-                    data[SENSOR_PH_START] = _parse_hobart_naive(event.get("StartDateTime"), _tz)
-                    data[SENSOR_PH_END]   = _parse_hobart_naive(event.get("ExpiryDateTime"), _tz)
-                data[SENSOR_PH_STATUS] = (
-                    "selection_pending"
-                    if expiry_dt and now_utc < expiry_dt
-                    else "no_event"
-                )
+        now_utc = dt_util.utcnow()
+        # /powerhour/upcoming-active is ordered by announcement time, so its
+        # first element can be a stale open offer that outranks an event the
+        # customer has already booked (issue #16). Rank every live event by
+        # relevance and drive the sensors from the best one.
+        candidates = [
+            summary
+            for summary in (
+                _summarise_powerhour_event(e, now_utc, _tz)
+                for e in powerhour_upcoming or []
+            )
+            if summary is not None
+        ]
+        if candidates:
+            _epoch = datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)
+            best = min(candidates, key=lambda s: (s["rank"], s["sort_key"] or _epoch))
+            data[SENSOR_PH_STATUS]             = best["status"]
+            data[SENSOR_PH_EVENT_NAME]         = best["name"]
+            data[SENSOR_PH_START]              = best["start"]
+            data[SENSOR_PH_END]                = best["end"]
+            data[SENSOR_PH_SELECTION_DEADLINE] = best["offer_expiry"]
+            data[SENSOR_PH_FIRST_SLOT_START]   = best["first_bookable"]
         else:
             data[SENSOR_PH_STATUS]             = "no_event"
             data[SENSOR_PH_EVENT_NAME]         = None

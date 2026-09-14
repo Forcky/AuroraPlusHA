@@ -438,6 +438,8 @@ Returns current and upcoming Power Hour events for the authenticated account.
 - `OfferExpiryDateTime` is typically 5 minutes before the last available timeslot starts
 - `TimeslotAll` offers multiple days and time windows to choose from; each slot has its own `ExpiryDateTime` (5 min before that slot starts) — a slot stops being bookable once its own `ExpiryDateTime` passes, independent of the event-level `OfferExpiryDateTime`
 - The integration consumes `TimeslotAll` for the `Power Hour First Slot Start` sensor (earliest still-bookable slot, filtered by per-slot `ExpiryDateTime`) and, while no slot is accepted, for the `Power Hour Start`/`End` fallback (earliest slot start → latest slot end)
+- The endpoint returns **every live event**, ordered by the event-level `StartDateTime` (announcement date) — **not** by relevance. A long-dated offer announced weeks ago sorts ahead of this weekend's event, so `[0]` can be a stale offer that masks an event the customer has already booked (issue #16). Rank the array instead: accepted slot in progress → accepted slot still upcoming → open offer with the earliest bookable slot, discarding events whose `OfferExpiryDateTime` has passed with no accepted slot and events whose accepted slot has already ended
+- There is **no event-level `ExpiryDateTime`** — the event-level deadline field is `OfferExpiryDateTime`, and `ExpiryDateTime` only exists on individual timeslots
 - The event-level `StartDateTime` is when the event was **announced**, not when free power starts — the timeslot `StartDateTime` is what matters for determining the free-power window. Do not surface it as a "start" to users (issue #11); it is only used as a last-resort fallback when `TimeslotAll` is empty
 
 ---
@@ -599,6 +601,8 @@ Querying with `index=-1` returns the most recent available completed period. `in
 | Wrong `serviceAgreementID` = null data | Using the ID from a closed premise returns 25 records with all null usage values and no error. |
 | `NoDataFlag: true` with records | `NoDataFlag` is often `true` even when 25 records are returned and hourly kWh data is present. Do not use this flag to skip processing — check for non-zero values in `KilowattHourUsage` directly instead. |
 | Power Hours datetimes are naive local | All datetime fields in `/powerhour/*` responses have no timezone suffix and represent `Australia/Hobart` local time. Must be localised before converting to UTC. |
+| Power Hours ordering | `/powerhour/upcoming-active` is ordered by announcement date, and multiple events are live concurrently. The first element is not the most relevant one — rank by accepted/active slot before falling back to open offers. |
+| No event-level `ExpiryDateTime` | Events carry `OfferExpiryDateTime`; only timeslots carry `ExpiryDateTime`. Reading `ExpiryDateTime` off an event silently yields `None`. |
 | Power Hours `Cost` sign | `Customer.Cost` after a completed event may be negative (credit) or positive (savings amount) depending on API version — use `abs()` to get the savings value. |
 | `accessToken` includes prefix | The `accessToken` value in login/refresh responses is `"bearer <token>"` — strip the prefix before using as a Bearer token. |
 | `Accept` header required | Omitting `Accept: application/json` causes usage records to return null usage values. |

@@ -105,6 +105,8 @@ If setup succeeds, a device called **Aurora Energy** will appear with all sensor
 
 > **Dashboard tip:** to show "Power Hours available — book before X", combine **Power Hour First Slot Start** with **Power Hour Selection Deadline** while status is `selection_pending`. Individual slots close ~5 minutes before they start, so the first-slot sensor advances to the next bookable slot as earlier ones lapse (refreshed on the hourly poll).
 
+> **Note:** Aurora often has several events open at once — a long-running offer announced weeks ago alongside this weekend's. The Power Hour sensors always describe the single most relevant event: one that is running right now, otherwise the soonest timeslot you have booked, otherwise the open offer whose next bookable slot comes first. Events whose offer has closed and whose booked slot has finished are ignored. (Before 1.0.11 the integration simply used the first event in Aurora's response, which is ordered by announcement date — a stale offer could mask an event you had already booked.)
+
 > **Note:** The coordinator evaluates the start and end timestamps on every poll and sets the status to `active` directly — your dashboard can use a simple `condition: state` check rather than comparing timestamps in a template. Because polling is aligned to the clock hour, status transitions are reflected within ~5 seconds of the event start or end time.
 
 ### Disabled by default
