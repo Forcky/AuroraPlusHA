@@ -196,7 +196,12 @@ class AuroraConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="user",
             data_schema=STEP_USER_SCHEMA,
-            description_placeholders={"auth_url": self._auth_url},
+            description_placeholders={
+                "auth_url": self._auth_url,
+                # Kept out of strings.json as a literal: hassfest rejects
+                # URLs in translation strings.
+                "redirect_url": _B2C_REDIRECT,
+            },
             errors=errors,
         )
 
@@ -294,6 +299,11 @@ class AuroraConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="reauth_confirm",
             data_schema=STEP_USER_SCHEMA,
-            description_placeholders={"auth_url": self._auth_url},
+            description_placeholders={
+                "auth_url": self._auth_url,
+                # Kept out of strings.json as a literal: hassfest rejects
+                # URLs in translation strings.
+                "redirect_url": _B2C_REDIRECT,
+            },
             errors=errors,
         )

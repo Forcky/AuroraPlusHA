@@ -1,14 +1,22 @@
 {
   "domain": "aurora_energy",
   "name": "Aurora Energy Tasmania (Aurora+)",
-  "version": "1.0.11",
+  "after_dependencies": [
+    "energy"
+  ],
+  "codeowners": [
+    "@Forcky"
+  ],
   "config_flow": true,
-  "iot_class": "cloud_polling",
-  "dependencies": ["recorder"],
-  "after_dependencies": ["energy"],
-  "requirements": [],
+  "dependencies": [
+    "recorder"
+  ],
   "documentation": "https://github.com/Forcky/AuroraPlusHA",
+  "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/Forcky/AuroraPlusHA/issues",
-  "codeowners": ["@Forcky"],
-  "loggers": ["custom_components.aurora_energy"]
+  "loggers": [
+    "custom_components.aurora_energy"
+  ],
+  "requirements": [],
+  "version": "1.0.12"
 }

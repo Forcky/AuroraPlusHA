@@ -8,7 +8,9 @@ A Home Assistant custom integration (HACS-installable) that exposes Aurora Energ
 
 ## Validating changes
 
-There is no automated test harness. The minimum verification loop is:
+CI runs the HACS action and hassfest on every push and PR (`.github/workflows/validate.yml`), plus daily — the schedule exists because several HACS checks are repository-level (topics, description, licence, brands) and no commit would otherwise re-evaluate them. Both must stay green; they gate inclusion in the HACS default store. Note hassfest's two easily-tripped rules: `manifest.json` keys must be ordered `domain`, `name`, then alphabetical, and **no translation string may contain a literal URL** — pass URLs through `description_placeholders` instead (see `redirect_url` in `config_flow.py`).
+
+There is no automated test harness. The minimum local verification loop is:
 
 ```bash
 python3 -c "import ast; ast.parse(open('custom_components/aurora_energy/coordinator.py').read())"
