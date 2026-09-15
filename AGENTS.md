@@ -59,7 +59,8 @@ The `TariffPeriodSensor` and Aurora's T93 boundaries run on the **NEM clock = fi
 
 ## Editing notes
 
-- `manifest.json` `version` field must be bumped for HACS to surface an update.
+- **Every user-visible change ships as a version.** Bump `manifest.json` `version` in the same commit, then publish a matching GitHub release once the change is pushed: `gh release create vX.Y.Z --target main --title "vX.Y.Z — <summary>" -F <notes>`. HACS reads *releases*, not commits — a bumped manifest with no tagged release means no HACS user ever receives the change. Tags are `vX.Y.Z`, release titles are `vX.Y.Z — <short summary>`, and notes follow the established shape: `## Fixed` / `## Upgrading` (say "nothing to do" when there is nothing to do) / `## Changes` (per-file) / a `compare/` link to the previous tag.
+- Never leave `main` with a manifest version that has no corresponding release. Check with `gh release list` before finishing.
 - `iot_class` is `cloud_polling` and `dependencies: ["recorder"]` is required for `async_add_external_statistics` to work.
 - The `Store` key (`{DOMAIN}_{entry.entry_id}_backfill`) holds `injected_dates`, `today_base_sums`, and `today_base_date`. Wiping it forces a fresh backfill — README documents this for users when new statistics are added.
 - `strings.json` controls config-flow UI text; update it alongside any `config_flow.py` change that adds a new step or error key.
