@@ -273,7 +273,7 @@ Returns metered usage records for the specified time period.
 |-----------|----------|-------------|
 | `serviceAgreementID` | Yes | From the **active** premise (`IsActive: true`) |
 | `customerId` | Yes | From the top-level customer object (`CustomerID`) |
-| `index` | Yes | `-1` = most recent completed period, `-2` = previous, down to `-9`. `index=0` is undocumented — may return today's in-progress partial data on some accounts. |
+| `index` | Yes | `-1` = most recent completed period, `-2` = previous, down to `-9`. `index=0` is undocumented — may return today's in-progress partial data on some accounts. During AEDT it reliably holds today's first hour (see *Meter data arrives in AEST days*). |
 | `nmi` | Recommended | NMI from `Meters[0].NMI` — required to get non-null usage values |
 
 **Example request:**
@@ -544,7 +544,7 @@ Each record covers one time period. For `timespan=day`, the array contains:
 | `TimeMeasureUnit` | string | `"Hour"`, `"Day"`, `"Week"`, `"Month"` |
 | `TimeMeasureCount` | int | Always `1` |
 | `HasSubstitutedData` | bool | Whether this interval used estimated data |
-| `KilowattHourUsage` | object or null | kWh by tariff key — present on Hour records |
+| `KilowattHourUsage` | object or null | kWh by tariff key — present on Hour records once that hour's meter data has been delivered; `null` before then (a delivered hour with no usage carries explicit `0.0` values) |
 | `KilowattHourUsageAEST` | object or null | Alternative kWh in AEST — observed always null |
 | `DollarValueUsage` | object or null | Dollars by tariff key — present on Day record only |
 
@@ -610,6 +610,8 @@ Querying with `index=-1` returns the most recent available completed period. `in
 | `KilowattHourUsageAEST` | This field exists on all records but has been observed as always `null`. Its purpose is unknown. |
 | Dollar data split | `DollarValueUsage` is only populated on the Day-level record, not on individual Hour records. kWh data is only on Hour records. |
 | `index=0` date is UTC, not local | `StartDate` on an `index=0` response is a UTC timestamp representing midnight Hobart-local time. Comparing the raw `YYYY-MM-DD` prefix to today's date will fail during Hobart business hours (before ~14:00–15:00 UTC). Convert to `Australia/Hobart` local time before comparing. |
+| Meter data arrives in AEST days | Aurora delivers meter data per NEM day (14:00–14:00 UTC, AEST year-round), the morning after. A `/usage/day` response, however, covers the **local** day, starting at Hobart midnight. During AEDT that's 13:00 UTC, so the local day's first hour (00:00–01:00 AEDT) arrives with the *previous* delivery and the remaining hours a day later. Until then, those hours have `KilowattHourUsage: null`. A day is complete only when every Hour record is non-null. "Any non-zero hour" is true a day early (#17). Observed 2026-10-06. |
+| `SummaryTotals` is the AEST day | `SummaryTotals` is summed over the AEST/NEM day, not the local-day Hour records. During AEDT it is offset by one hour from the records: it includes the next local day's first hour and excludes this day's. It differs from the sum of the Hour records by that hour's difference, e.g. 37.128 vs 36.951. For `index=0` it reads all zeros even when the first hour is already present. So don't use it to check completeness, and expect daily sensors (from `SummaryTotals`) and the Energy Dashboard (from Hour records) to disagree slightly during AEDT. |
 | `T93PEAK` absent on weekends | On weekend days `SummaryTotals` omits the `T93PEAK` key entirely (from both `KilowattHourUsage` and `DollarValueUsage`) rather than reporting 0 — no peak window exists Sat/Sun. Absence alongside a present `T93OFFPEAK` sibling means 0, not missing data. |
 
 ---
