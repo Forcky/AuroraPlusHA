@@ -95,6 +95,14 @@ def _parse_date_field(dt_str: Optional[str]) -> Optional[datetime.datetime]:
         return None
 
 
+def _hobart_date(date_key: Optional[str]) -> Optional[datetime.date]:
+    """Hobart-local date of a usage StartDate (a UTC timestamp of local midnight)."""
+    start_dt = dt_util.parse_datetime(date_key) if date_key else None
+    if start_dt is None:
+        return None
+    return dt_util.as_utc(start_dt).astimezone(zoneinfo.ZoneInfo(TZ_HOBART)).date()
+
+
 def _parse_hobart_naive(
     dt_str: Optional[str], tz: zoneinfo.ZoneInfo
 ) -> Optional[datetime.datetime]:
@@ -485,27 +493,9 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "aurora_energy_reconcile",
             )
 
-        # Inject the fetched day's records once Aurora has delivered every hour.
-        # During AEDT the first local hour arrives a day before the rest (#17),
-        # so "has some data" is not enough — a day marked injected early would
-        # never be revisited when the remaining hours land.
-        date_key = parsed.get("start_date")
-        if date_key and date_key not in self._injected_dates:
-            records = parsed.get("metered_records", [])
-            if self._has_real_kwh_data(records) and self._is_day_complete(records):
-                day_start = dt_util.parse_datetime(date_key)
-                base = (
-                    await self._get_sums_before(dt_util.as_utc(day_start))
-                    if day_start is not None
-                    else None
-                )
-                sums = await self._inject_statistics(
-                    records,
-                    date_key,
-                    base,
-                    summary_totals=usage_data.get("SummaryTotals"),
-                )
-                await self._seed_today_base_if_yesterday(date_key, sums)
+        # Inject completed days (yesterday, or the day before if Aurora
+        # delivered it late)
+        await self._inject_recent_days(usage_data, _nmi)
 
         # Fetch today's partial data and inject it on every poll
         await self._fetch_and_inject_today(_nmi)
@@ -708,6 +698,83 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             sums[stat_id] = 0.0
         return sums
 
+    def _injected_local_dates(self) -> set[datetime.date]:
+        """Hobart-local dates of every injected day."""
+        dates = set()
+        for key in self._injected_dates:
+            day = _hobart_date(key)
+            if day is not None:
+                dates.add(day)
+        return dates
+
+    async def _inject_recent_days(
+        self, yesterday_usage: dict[str, Any], nmi: Optional[str]
+    ) -> None:
+        """Inject yesterday, and the day before if Aurora delivered it late.
+
+        A day is injected once Aurora has delivered every hour of it. During
+        AEDT the first local hour arrives a day before the rest (#17), so "has
+        some data" is not enough — a day marked injected early would never be
+        revisited when the remaining hours land.
+
+        Normally only yesterday (index=-1) is pending. If Aurora delivers a day
+        more than a day late, it has already moved to index=-2 by the time it
+        completes; it is fetched and injected here so it does not wait for an
+        HA restart. Yesterday is then re-injected on top of it — completed or
+        not — so the cumulative sums stay continuous across both days.
+        """
+        y_key = yesterday_usage.get("StartDate")
+        y_records = yesterday_usage.get("MeteredUsageRecords", [])
+        y_day = _hobart_date(y_key)
+        if not y_key or y_day is None:
+            return
+        y_ready = self._has_real_kwh_data(y_records) and self._is_day_complete(y_records)
+
+        chain: list[tuple[str, list[dict], Optional[dict], bool]] = []
+        # Only fetch index=-2 when it is missing — normally it was injected
+        # yesterday, so this costs no extra request. Until the startup
+        # reconcile has run, injected_dates is incomplete and the reconcile
+        # covers index=-2 itself.
+        if (
+            self._reconcile_finished
+            and y_day - datetime.timedelta(days=1) not in self._injected_local_dates()
+        ):
+            try:
+                prev = await self.client.async_get_usage(
+                    timespan="day", index=-2, nmi=nmi)
+            except Exception as err:
+                _LOGGER.debug("Aurora+: could not fetch index -2: %s", err)
+                prev = {}
+            p_key = prev.get("StartDate")
+            p_records = prev.get("MeteredUsageRecords", [])
+            if (
+                p_key
+                and self._has_real_kwh_data(p_records)
+                and self._is_day_complete(p_records)
+            ):
+                _LOGGER.info("Aurora+: %s was delivered late, injecting it", p_key)
+                chain.append((p_key, p_records, prev.get("SummaryTotals"), True))
+                if self._has_real_kwh_data(y_records):
+                    chain.append(
+                        (y_key, y_records, yesterday_usage.get("SummaryTotals"), y_ready))
+        if not chain and y_ready and y_key not in self._injected_dates:
+            chain.append((y_key, y_records, yesterday_usage.get("SummaryTotals"), True))
+        if not chain:
+            return
+
+        day_start = dt_util.parse_datetime(chain[0][0])
+        if day_start is None:
+            return
+        sums = await self._get_sums_before(dt_util.as_utc(day_start))
+        for date_key, records, summary_totals, complete in chain:
+            sums = await self._inject_statistics(
+                records, date_key, sums,
+                summary_totals=summary_totals, mark_injected=complete)
+        # An incomplete yesterday is no baseline for today: it is re-injected,
+        # and re-seeds the base, once its remaining hours arrive.
+        if chain[-1][3]:
+            await self._seed_today_base_if_yesterday(chain[-1][0], sums)
+
     async def _seed_today_base_if_yesterday(
         self, date_key: str, sums: dict[str, float]
     ) -> None:
@@ -720,12 +787,8 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         the in-memory sums are the authoritative value. This overrides a base
         already captured today: it was derived before yesterday was complete.
         """
-        _tz = zoneinfo.ZoneInfo(TZ_HOBART)
-        day_start = dt_util.parse_datetime(date_key)
-        if day_start is None:
-            return
-        today = dt_util.now(_tz).date()
-        if dt_util.as_utc(day_start).astimezone(_tz).date() != today - datetime.timedelta(days=1):
+        today = dt_util.now(zoneinfo.ZoneInfo(TZ_HOBART)).date()
+        if _hobart_date(date_key) != today - datetime.timedelta(days=1):
             return
         self._today_base_sums = dict(sums)
         self._today_base_date = today
@@ -733,13 +796,22 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         _LOGGER.debug("Aurora+: seeded today's base sums from %s", date_key)
 
     async def _reconcile_and_update_base(self) -> None:
-        """Background task: reconcile history (re-seeds today's base itself)."""
+        """Background task: reconcile history (re-seeds today's base itself).
+
+        Today's rows are then rewritten straight away rather than at the next
+        hourly poll, so a repaired history does not leave today sitting on a
+        stale base (a visible step at midnight) for up to an hour.
+        """
         try:
             await self._reconcile_history()
         except Exception as err:
             _LOGGER.error("Aurora+: history reconciliation failed: %s", err)
         finally:
             self._reconcile_finished = True
+        try:
+            await self._fetch_and_inject_today(self._nmi)
+        except Exception as err:
+            _LOGGER.debug("Aurora+: post-reconcile today injection failed: %s", err)
 
     async def _reconcile_history(self) -> dict[str, float]:
         """Fetch the last BACKFILL_DAYS days and re-inject any that are missing.
@@ -790,7 +862,9 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Persist backfill state and today's intraday baseline to storage."""
         await self._store.async_save(
             {
-                "injected_dates": list(self._injected_dates),
+                # Sorted for readability only — the keys are UTC ISO strings,
+                # so lexical order is chronological. Nothing depends on it.
+                "injected_dates": sorted(self._injected_dates),
                 "today_base_sums": dict(self._today_base_sums),
                 "today_base_date": (
                     self._today_base_date.isoformat()
@@ -824,6 +898,7 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         date_key: str,
         sums: dict[str, float] | None = None,
         summary_totals: Optional[dict[str, Any]] = None,
+        mark_injected: bool = True,
     ) -> dict[str, float]:
         """Inject hourly metered records as external statistics into the recorder.
 
@@ -837,6 +912,8 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 returns DollarValueUsage at the day level (per-hour records
                 have a null DollarValueUsage). Day totals are then distributed
                 across hours weighted by per-hour kWh share.
+            mark_injected: False when re-chaining a day that is not complete
+                yet, so it is injected again once its remaining hours arrive.
 
         Returns:
             The updated cumulative sums after all records have been processed.
@@ -920,8 +997,9 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     self.hass, _STAT_METADATA[stat_id], data_points
                 )
 
-        self._injected_dates.add(date_key)
-        await self._persist_state()
+        if mark_injected:
+            self._injected_dates.add(date_key)
+            await self._persist_state()
         _LOGGER.debug("Aurora+: injected statistics for %s", date_key)
         return sums
 
