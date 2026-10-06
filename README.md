@@ -134,7 +134,7 @@ The following sensors exist but are disabled by default. Enable them via **Setti
 
 The integration injects hourly statistics into the HA recorder, which can be used directly in the **Energy Dashboard**.
 
-On every HA startup it checks the last 7 days and injects any that are missing from the recorder — this means gaps caused by downtime or broken authentication are automatically recovered after a restart. Each new completed day's records are injected once Aurora has delivered every hour of it (typically 8–9am AEST the next morning). The integration also attempts to fetch today's in-progress hourly data on every poll — if the API returns it, the current day's bars will update hourly throughout the day.
+On every HA startup it checks the last 7 days and injects any that are missing from the recorder — this means gaps caused by downtime or broken authentication are automatically recovered after a restart. Each new completed day's records are injected once Aurora has delivered every hour of it (typically 8–9am AEST the next morning). If Aurora delivers a day late, by up to about two days, it is picked up on the next hourly poll without a restart. Anything later than that is recovered by the next restart. The integration also attempts to fetch today's in-progress hourly data on every poll — if the API returns it, the current day's bars will update hourly throughout the day.
 
 **Daylight saving (Oct–Apr):** Aurora delivers meter data in fixed AEST days, so during AEDT the 00:00–01:00 hour of each local day arrives a day before the rest. From 1.0.13 the previous day is only recorded once all of its hours are in, so between midnight and the morning delivery the Energy Dashboard shows yesterday's first hour only. This fills in on its own. Versions 1.0.12 and earlier recorded the day at that point and never revisited it ([#17](https://github.com/Forcky/AuroraPlusHA/issues/17)).
 
@@ -177,7 +177,7 @@ Aurora's API only exposes dollar values at the day level, so per-hour cost stati
 |-----------|-----------------|-------|
 | Billing data | Every clock hour | Balance, amount owed, etc. — polled 5 seconds past each hour |
 | Usage data | Every clock hour | Reflects the previous day; Aurora releases meter data around 8–9am AEST each morning |
-| Energy Dashboard stats (historical) | Once per day | Hourly records injected once every hour of the day has been delivered; up to 7-day backfill on every HA restart |
+| Energy Dashboard stats (historical) | Once per day | Hourly records injected once every hour of the day has been delivered (days delivered up to ~2 days late are picked up automatically); up to 7-day backfill on every HA restart |
 | Energy Dashboard stats (today) | Every clock hour | Today's partial hourly data re-injected each poll if the API returns it |
 | Billing period totals | Every clock hour | Running kWh/cost totals for the current billing cycle |
 | Power Hours (upcoming) | Every clock hour | Active event, timeslot, and selection deadline — status reflects transitions within ~5 seconds |
