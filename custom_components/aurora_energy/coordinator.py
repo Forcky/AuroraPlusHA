@@ -400,6 +400,7 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._powerhour_savings_cache: Optional[float] = None
         self._today_base_sums: dict[str, float] = {}
         self._today_base_date: Optional[datetime.date] = None
+        self._reconcile_finished = False
 
     # ------------------------------------------------------------------
     # Core update method
@@ -484,16 +485,27 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "aurora_energy_reconcile",
             )
 
-        # Inject the fetched day's records if not already done
+        # Inject the fetched day's records once Aurora has delivered every hour.
+        # During AEDT the first local hour arrives a day before the rest (#17),
+        # so "has some data" is not enough — a day marked injected early would
+        # never be revisited when the remaining hours land.
         date_key = parsed.get("start_date")
         if date_key and date_key not in self._injected_dates:
             records = parsed.get("metered_records", [])
-            if self._has_real_kwh_data(records):
-                await self._inject_statistics(
+            if self._has_real_kwh_data(records) and self._is_day_complete(records):
+                day_start = dt_util.parse_datetime(date_key)
+                base = (
+                    await self._get_sums_before(dt_util.as_utc(day_start))
+                    if day_start is not None
+                    else None
+                )
+                sums = await self._inject_statistics(
                     records,
                     date_key,
+                    base,
                     summary_totals=usage_data.get("SummaryTotals"),
                 )
+                await self._seed_today_base_if_yesterday(date_key, sums)
 
         # Fetch today's partial data and inject it on every poll
         await self._fetch_and_inject_today(_nmi)
@@ -643,42 +655,91 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 return True
         return False
 
+    @staticmethod
+    def _is_day_complete(records: list[dict[str, Any]]) -> bool:
+        """Return True once Aurora has delivered every hour of the day.
+
+        Hours Aurora has not delivered yet carry ``KilowattHourUsage: null``;
+        delivered hours carry a dict, with explicit zeros when nothing was
+        used. Aurora delivers meter data in fixed AEST (NEM) days, so during
+        AEDT the first local hour (00:00-01:00, 13:00-14:00 UTC) arrives with
+        the *previous* day's delivery and the rest a day later (#17).
+        SummaryTotals cannot be used here: it is also summed over the AEST
+        day, so it never matches the hourly records during AEDT.
+        """
+        hourly = [r for r in records if r.get("TimeMeasureUnit") == "Hour"]
+        return bool(hourly) and all(
+            r.get("KilowattHourUsage") is not None for r in hourly
+        )
+
     async def _get_sums_before(self, dt: datetime.datetime) -> dict[str, float]:
         """Query the recorder for the last cumulative sum before a given datetime.
 
-        Used by _reconcile_history to establish the correct baseline so that
-        re-injected days do not produce a sum lower than the previous recorded
-        value (which would manifest as a large negative delta in the dashboard).
+        Used as the starting baseline whenever a day is (re-)injected, so its
+        rows continue monotonically from the day before it rather than from the
+        recorder's high-water mark — which can be a later day's partial rows
+        and would otherwise show up as a large negative delta in the dashboard.
+
+        Searches the 48 hours before ``dt`` first, then widens to daily rows
+        over 400 days, so a multi-day gap (e.g. expired tokens) does not reset
+        a statistic's cumulative sum to zero.
         """
-        start_dt = dt - datetime.timedelta(hours=48)
-        result: dict = await get_instance(self.hass).async_add_executor_job(
-            statistics_during_period,
-            self.hass, start_dt, dt,
-            set(_STAT_METADATA.keys()),
-            "hour", None, {"sum"},
-        )
         sums: dict[str, float] = {}
-        for stat_id in _STAT_METADATA:
-            entries = result.get(stat_id) or []
-            if entries:
-                last = max(entries, key=lambda e: e["start"])
-                sums[stat_id] = float(last.get("sum") or 0.0)
-            else:
-                sums[stat_id] = 0.0
+        missing = set(_STAT_METADATA)
+        for window, period in (
+            (datetime.timedelta(hours=48), "hour"),
+            (datetime.timedelta(days=400), "day"),
+        ):
+            result: dict = await get_instance(self.hass).async_add_executor_job(
+                statistics_during_period,
+                self.hass, dt - window, dt,
+                set(missing),
+                period, None, {"sum"},
+            )
+            for stat_id in list(missing):
+                entries = result.get(stat_id) or []
+                if entries:
+                    last = max(entries, key=lambda e: e["start"])
+                    sums[stat_id] = float(last.get("sum") or 0.0)
+                    missing.discard(stat_id)
+            if not missing:
+                break
+        for stat_id in missing:
+            sums[stat_id] = 0.0
         return sums
 
-    async def _reconcile_and_update_base(self) -> None:
-        """Background task: reconcile history then refresh today's base sums."""
+    async def _seed_today_base_if_yesterday(
+        self, date_key: str, sums: dict[str, float]
+    ) -> None:
+        """Use a just-injected day's closing sums as today's base, if it was yesterday.
+
+        Today's rows must continue from the end of yesterday. When yesterday is
+        injected in the same poll as today's partial data (the normal case
+        during AEDT, when both arrive in one Aurora delivery), its import is
+        still queued in the recorder, so re-reading the recorder would race —
+        the in-memory sums are the authoritative value. This overrides a base
+        already captured today: it was derived before yesterday was complete.
+        """
         _tz = zoneinfo.ZoneInfo(TZ_HOBART)
+        day_start = dt_util.parse_datetime(date_key)
+        if day_start is None:
+            return
+        today = dt_util.now(_tz).date()
+        if dt_util.as_utc(day_start).astimezone(_tz).date() != today - datetime.timedelta(days=1):
+            return
+        self._today_base_sums = dict(sums)
+        self._today_base_date = today
+        await self._persist_state()
+        _LOGGER.debug("Aurora+: seeded today's base sums from %s", date_key)
+
+    async def _reconcile_and_update_base(self) -> None:
+        """Background task: reconcile history (re-seeds today's base itself)."""
         try:
-            backfill_sums = await self._reconcile_history()
+            await self._reconcile_history()
         except Exception as err:
             _LOGGER.error("Aurora+: history reconciliation failed: %s", err)
-            return
-        if self._today_base_date != dt_util.now(_tz).date() and backfill_sums:
-            self._today_base_sums = backfill_sums
-            self._today_base_date = dt_util.now(_tz).date()
-            await self._persist_state()
+        finally:
+            self._reconcile_finished = True
 
     async def _reconcile_history(self) -> dict[str, float]:
         """Fetch the last BACKFILL_DAYS days and re-inject any that are missing.
@@ -696,6 +757,15 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     timespan="day", index=idx, nmi=getattr(self, "_nmi", None))
                 date_key = usage.get("StartDate")
                 records = usage.get("MeteredUsageRecords", [])
+                if idx == -1 and date_key and not self._is_day_complete(records):
+                    # Yesterday is still partly undelivered (normal during AEDT
+                    # until the morning delivery). Leave it for the regular poll,
+                    # and un-mark it in case an older version marked it early.
+                    self._injected_dates.discard(date_key)
+                    _LOGGER.debug(
+                        "Aurora+: %s not fully delivered yet, deferring", date_key
+                    )
+                    continue
                 if date_key and self._has_real_kwh_data(records):
                     available.append((date_key, records, usage.get("SummaryTotals")))
             except Exception as err:
@@ -713,6 +783,7 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._injected_dates.discard(date_key)
             sums = await self._inject_statistics(
                 records, date_key, sums, summary_totals=summary_totals)
+        await self._seed_today_base_if_yesterday(available[-1][0], sums)
         return sums
 
     async def _persist_state(self) -> None:
@@ -891,6 +962,11 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return
         if not self._has_real_kwh_data(records):
             return
+        if not self._reconcile_finished:
+            # Startup reconcile may still be rewriting the days before today;
+            # a base read now could be stale. The next poll picks today up.
+            _LOGGER.debug("Aurora+: history reconcile still running, deferring today")
+            return
 
         await self._inject_today_statistics(
             records,
@@ -918,12 +994,17 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         _tz = zoneinfo.ZoneInfo(TZ_HOBART)
         today = dt_util.now(_tz).date()
 
-        # Refresh base sums once per calendar day. The base is persisted, so a
-        # mid-day restart restores the original midnight baseline rather than
-        # re-deriving it from the recorder (which already contains today's
-        # partial rows and would inflate the cumulative sum on every restart).
+        # Capture the base once per calendar day (persisted across restarts),
+        # unless injecting yesterday already seeded it. It is the recorder's sum
+        # just before today's midnight: the last row overall would be today's
+        # own partial rows from earlier polls, inflating the base (#17).
         if self._today_base_date != today:
-            self._today_base_sums = await self._get_last_sums()
+            day_start = dt_util.parse_datetime(date_key)
+            if day_start is None:
+                return
+            self._today_base_sums = await self._get_sums_before(
+                dt_util.as_utc(day_start)
+            )
             self._today_base_date = today
             await self._persist_state()
             _LOGGER.debug("Aurora+: captured today's base sums for %s", today)
