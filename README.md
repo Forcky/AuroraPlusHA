@@ -257,6 +257,9 @@ If you cannot upgrade immediately, stop Home Assistant, edit `.storage/core.conf
 ### Energy Dashboard is missing data after a period of downtime or broken authentication
 The integration backfills up to 7 days of missing data automatically on every HA restart. After resolving the underlying issue (e.g. re-authenticating), **restart Home Assistant** to trigger the backfill. Data older than 7 days cannot be recovered as the Aurora+ API does not expose it.
 
+### Energy Dashboard hours look shifted by an hour or two after a restart
+In 1.0.14 and earlier, the startup backfill and the regular poll requested data from Aurora at the same time. Aurora's API sometimes answers overlapping requests with each hour's value taken from 1–2 hours earlier. A day recorded during a restart could therefore be shifted (e.g. midnight showing the previous evening's usage) or a little short. From 1.0.15 requests are sent one at a time. Update and **restart Home Assistant**; the restart re-injects the last 7 days correctly.
+
 ### Energy Dashboard shows only the 00:00–01:00 hour for days since daylight saving began
 This was a bug in 1.0.12 and earlier ([#17](https://github.com/Forcky/AuroraPlusHA/issues/17)): once AEDT started, each day was recorded before Aurora had delivered most of it, and the cumulative total could step backwards at midnight. Update to 1.0.13 or later and **restart Home Assistant**. The restart re-injects the last 7 days with the complete data and corrects the running totals, so you don't need to edit `.storage`.
 

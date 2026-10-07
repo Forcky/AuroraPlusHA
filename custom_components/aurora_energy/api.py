@@ -67,6 +67,11 @@ class AuroraApiClient:
             self._refresh_cookie = entry.data.get(CONF_REFRESH_COOKIE)
 
         self._refresh_lock = asyncio.Lock()
+        # Aurora returns hour-shifted /usage/day values when requests overlap
+        # (observed 2026-10-07): identical StartTimes, values from 1-2 hours
+        # earlier. HA's startup runs the poll and the history reconcile
+        # concurrently, so every request is serialised through this lock.
+        self._request_lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
     # Public auth methods
@@ -286,33 +291,38 @@ class AuroraApiClient:
     async def _get_with_retry(
         self, url: str, params: Optional[dict] = None
     ) -> dict[str, Any]:
-        """GET with a single automatic token-refresh retry on 401."""
-        for attempt in range(2):
-            async with self._session.get(
-                url,
-                headers={
-                    "Authorization": f"Bearer {self._access_token}",
-                    "Accept": "application/json",
-                    "User-Agent": "python/auroraplus",
-                },
-                params=params,
-            ) as resp:
-                if resp.status == 401:
-                    if attempt == 0:
-                        _LOGGER.debug(
-                            "Aurora 401 from %s (access token length: %d) — refreshing token",
-                            url,
-                            len(self._access_token or ""),
-                        )
-                        await self.async_refresh_token()
-                        continue
-                    raise AuthenticationError(
-                        f"Access token rejected by {url} after refresh (401)"
-                    )
-                resp.raise_for_status()
-                return await resp.json(content_type=None)
+        """GET with a single automatic token-refresh retry on 401.
 
-        raise RuntimeError("Unexpected state after retry loop")
+        Requests are serialised: Aurora's API returns wrong data for
+        overlapping requests (see ``_request_lock``).
+        """
+        async with self._request_lock:
+            for attempt in range(2):
+                async with self._session.get(
+                    url,
+                    headers={
+                        "Authorization": f"Bearer {self._access_token}",
+                        "Accept": "application/json",
+                        "User-Agent": "python/auroraplus",
+                    },
+                    params=params,
+                ) as resp:
+                    if resp.status == 401:
+                        if attempt == 0:
+                            _LOGGER.debug(
+                                "Aurora 401 from %s (access token length: %d) — refreshing token",
+                                url,
+                                len(self._access_token or ""),
+                            )
+                            await self.async_refresh_token()
+                            continue
+                        raise AuthenticationError(
+                            f"Access token rejected by {url} after refresh (401)"
+                        )
+                    resp.raise_for_status()
+                    return await resp.json(content_type=None)
+
+            raise RuntimeError("Unexpected state after retry loop")
 
     def _extract_refresh_cookie(self, cookies: Any) -> Optional[str]:
         """Extract the RefreshToken cookie value from a response."""
