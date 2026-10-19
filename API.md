@@ -112,6 +112,7 @@ RefreshToken=<refresh_cookie_value>
   about monthly no matter how often you refresh. This was the cause of the recurring
   re-auth prompts.
 - A 401/403 response means the refresh token has expired — full re-authentication required
+- Every other failure says nothing about the refresh token: a connection error, a timeout, a 5xx or other status, a body that isn't JSON (such as a maintenance page), or a 200 without an `accessToken`. Keep the stored tokens as they are and retry later. In particular, never overwrite them with `null` from such a response. From 1.0.17 the integration does this, so only a 401/403 starts Home Assistant's re-authentication flow. Before that, any of these failures did.
 - The response may include an updated `refreshToken` — always store the latest value
 - The `RefreshToken` cookie in the response may also be updated — store the latest value
 
@@ -234,15 +235,32 @@ Returns account and billing information for the authenticated customer.
 
 **Additional premise fields (may be null depending on account state):**
 
+Entries marked *(fixture)* come from another Aurora+ client's recorded responses: the test fixtures of [LeighCurran/AuroraPlus](https://github.com/LeighCurran/AuroraPlus) (`tests/conftest.py`, recorded December 2025). They have **not been checked against our own account**. Where a description says "presumably", it is inferred from the field name and the example value.
+
 | Field | Type | Description |
 |-------|------|-------------|
 | `BillDue` | date string or null | Date the current bill is due for payment |
 | `BillOverDueAmount` | float or null | Amount overdue (0 when not overdue) |
 | `NumberOfUnpaidBills` | int or null | Count of unpaid bills |
-| `CurrentTimeOfUse` | string or null | Active tariff code (e.g. `"T93"`) |
-| `CurrentTimeOfUsePeriodEndDate` | date string or null | When the current tariff contract period ends |
+| `CurrentTimeOfUse` | string or null | The current tariff. Our sample has the code `"T93"`. The fixture has a description of the current period instead, `"Peak - Residential Time of Use - Tariff 93"`. It is unconfirmed which form current accounts get. *(fixture)* |
+| `CurrentTimeOfUseType` | string or null | Our sample has `"TIME_OF_USE"`. The fixture has the current period, `"PEAK"`. It is unconfirmed which form current accounts get. *(fixture)* |
+| `CurrentTimeOfUsePeriodEndDate` | ISO 8601 UTC string or null | End of the **current peak/off-peak window**, not the end of a contract. The fixture has `"2025-12-26T11:00:01Z"`, which is 21:00:01 AEST (22:00 AEDT local), alongside `CurrentTimeOfUseType: "PEAK"`. That is the end of the weekday 4–9 pm AEST evening peak. The integration parses this field but doesn't show it: its *T93 Tariff Period End* sensor is computed from the fixed AEST schedule. *(fixture)* |
 | `HasActivePaymentExtension` | bool | Whether a payment extension arrangement is active |
 | `HasActivePaymentPlans` | bool | Whether a payment plan is active |
+| `ActualBalance` | float or null | Fixture: `-73.71`, the same as its `UnbilledAmount`, while its `EstimatedBalance` is `-81.56`. Presumably the balance as at `BalanceLastUpdatedDate`, without the estimate that `EstimatedBalance` adds. The sign convention is unconfirmed. *(fixture)* |
+| `BalanceLastUpdatedDate` | ISO 8601 string (`+00:00` offset) | Fixture: `"2025-12-23T13:00:00+00:00"` (midnight AEDT). Presumably when the balance figures were last updated. *(fixture)* |
+| `UnbilledAmountAsAt` | ISO 8601 string (`+00:00` offset) | Fixture: `"2025-12-23T13:00:00+00:00"`, the same as `BalanceLastUpdatedDate`. Presumably when `UnbilledAmount` was calculated. *(fixture)* |
+| `BillFrom` | unknown (null in fixture) | Fixture: `null`, on an account with no current bill (`BillTotalAmount: 0.0`). Presumably the start of the period the current bill covers. *(fixture)* |
+| `BillTo` | unknown (null in fixture) | Fixture: `null`. Presumably the end of that period. *(fixture)* |
+| `BillNextRun` | ISO 8601 string (`+00:00` offset) | Fixture: `"2026-01-09T13:00:00+00:00"`. Presumably when the next bill will be produced. *(fixture)* |
+| `BillNextTo` | ISO 8601 string (`+00:00` offset) | Fixture: `"2026-01-06T13:00:00+00:00"`. Presumably the end of the period the next bill will cover. *(fixture)* |
+| `LastMeterReadDate` | unknown (null in fixture) | Fixture: `null`. Presumably the date of the last meter read. *(fixture)* |
+| `CurrentAppExperience` | string or null | Fixture: `"PAYG"`, on an account with `HasPAYGProduct: true`. It is `null` on both premises in the fixture's `/customers/premises` response. Presumably the Aurora+ app mode the premise gets. *(fixture)* |
+| `ServiceAgreementStatus` | string | Fixture: `"Active"`. The fixture's `/customers/premises` response also has a `"Stopped"` agreement at the same address. *(fixture)* |
+| `ServiceAgreementStartDate` | ISO 8601 string (`+00:00` offset) | Fixture: `"2023-05-18T14:00:00+00:00"` (midnight AEST). Presumably when the service agreement started. It has the same value as `ServiceAgreements[<id>].StartDate` in the usage response. *(fixture)* |
+| `ServiceAgreementType` | string | Fixture: `"Residential"`. *(fixture)* |
+
+The fixture's premise carries further fields that aren't listed here, such as `BillId`, `ServiceAgreementOfferNumber`, `ParentAccountNumber` and `HasOnProductStatus`.
 
 **Additional customer root fields:**
 
@@ -250,6 +268,14 @@ Returns account and billing information for the authenticated customer.
 |-------|------|-------------|
 | `UnreadNotificationsCount` | int | Number of unread in-app notifications |
 | `HasSolarProduct` | bool | Whether the account has a solar product |
+
+---
+
+### `GET /api/customers/premises` (seen, undocumented)
+
+Seen only in another Aurora+ client's test mocks (see the *(fixture)* note above). It has not been called against our own account, and this integration doesn't use it.
+
+In the mock, the response is a **single customer object, not an array**. Its `Premises` array has two entries for the same address. One is a `"Stopped"` agreement (offer `TERST010`, started 2021). The other is the `"Active"` agreement (offer `TERAP010`, started 2023) that `/customers/current` also returns. Several fields that `/customers/current` populates are `null` here: `CurrentTimeOfUse`, `CurrentTimeOfUseType`, `CurrentTimeOfUsePeriodEndDate`, `CurrentAppExperience`, `ProductLevel` and `UnreadNotificationsCount`. Whether the endpoint takes any parameters is unknown.
 
 ---
 
@@ -519,8 +545,8 @@ Returns which payment methods are currently active for an account.
 | `ServiceAgreementID` | string | The service agreement ID used for this query |
 | `SummaryTotals` | object | Aggregated totals for the period (reliable when correct `serviceAgreementID` is used) |
 | `MeteredUsageRecords` | array | One record per time period — see below |
-| `NonMeteredUsageRecords` | array | Fixed charges (supply charge, etc.) |
-| `ServiceAgreements` | object | Map of service agreement IDs with their date ranges |
+| `NonMeteredUsageRecords` | array | Fixed charges (supply charge, etc.) — see below |
+| `ServiceAgreements` | object | Map of service agreement IDs to their details — see below |
 
 ### `SummaryTotals`
 
@@ -545,8 +571,37 @@ Each record covers one time period. For `timespan=day`, the array contains:
 | `TimeMeasureCount` | int | Always `1` |
 | `HasSubstitutedData` | bool | Whether this interval used estimated data |
 | `KilowattHourUsage` | object or null | kWh by tariff key — present on Hour records once that hour's meter data has been delivered; `null` before then (a delivered hour with no usage carries explicit `0.0` values) |
-| `KilowattHourUsageAEST` | object or null | Alternative kWh in AEST — observed always null |
+| `KilowattHourUsageAEST` | object or null | The same hour slot on the AEST (NEM) clock. In the December (AEDT) fixture, every Hour record has it, and each record's value equals the **next** record's `KilowattHourUsage`. The record labelled 00:00 local (13:00Z) therefore carries 00:00 AEST (14:00Z), and the day's last record carries the next local day's first hour. Summed over the day, these values equal `SummaryTotals` exactly (T93OFFPEAK 15.39, against 15.411 from the local values), which confirms that `SummaryTotals` is the AEST day. It is null on Day records, in both the day and the week fixture. Our own sample above, taken during AEST when the two clocks agree, shows null. It hasn't been checked whether our account fills it in during AEDT. The integration doesn't use it. See [Known quirks](#known-quirks): *Meter data arrives in AEST days*. *(fixture)* |
 | `DollarValueUsage` | object or null | Dollars by tariff key — present on Day record only |
+
+### `NonMeteredUsageRecords` items
+
+One item per fixed charge for the period, such as the daily supply charge. The integration doesn't read these; the same amount appears as `Other` in `SummaryTotals.DollarValueUsage`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `Description` | string | e.g. `"Supply Charge - Residential Time of Use - Tariff 93"` |
+| `DollarAmount` | float | The charge for the period, e.g. `1.511814` for one day (equal to `SummaryTotals.DollarValueUsage.Other`) |
+| `StartTime` | ISO 8601 UTC | Period start, e.g. `"2025-12-24T13:00:00Z"` (local midnight). *(fixture)* |
+| `EndTime` | ISO 8601 UTC | Period end. *(fixture)* |
+| `TimeMeasureUnit` | string | `"Day"` for `/usage/day`, `"Week"` for `/usage/week`. *(fixture)* |
+| `TimeMeasureCount` | int | `1` in every fixture. *(fixture)* |
+
+### `ServiceAgreements` entries
+
+Keyed by `ServiceAgreementID`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `Id` | string | The service agreement ID (same as the key) |
+| `StartDate` | ISO 8601 string | Agreement start, e.g. `"2026-02-24T13:00:00+00:00"` |
+| `EndDate` | string | `"0001-01-01T00:00:00"` (no timezone) for an agreement that hasn't ended |
+| `IsPaygServiceAgreement` | bool | Fixture: `true`. Presumably whether this is a pay-as-you-go agreement. *(fixture)* |
+| `PremiseName` | string | Fixture: `"1 EXAMPLE ST HOBART 7000"`, the street address and postcode. *(fixture)* |
+| `PremiseSuburb` | string | Fixture: `"HOBART"`. *(fixture)* |
+| `Solar` | bool | Fixture: `true`. Presumably whether the premise has solar. *(fixture)* |
+| `Status` | string | Fixture: `"A"`, presumably "active". *(fixture)* |
+| `Type` | string | Fixture: `"TERAP010"`. This is the same value as the premise's `ServiceAgreementOfferNumber`, i.e. an offer/product code rather than `"Residential"`. *(fixture)* |
 
 ---
 
@@ -607,7 +662,7 @@ Querying with `index=-1` returns the most recent available completed period. `in
 | `accessToken` includes prefix | The `accessToken` value in login/refresh responses is `"bearer <token>"` — strip the prefix before using as a Bearer token. |
 | `Accept` header required | Omitting `Accept: application/json` causes usage records to return null usage values. |
 | `User-Agent` header | The API expects `User-Agent: python/auroraplus` — other values may work but this is the tested value. |
-| `KilowattHourUsageAEST` | This field exists on all records but has been observed as always `null`. Its purpose is unknown. |
+| `KilowattHourUsageAEST` is the AEST-aligned hour | Null in our own sample, which was taken during AEST. In another client's recorded December (AEDT) response it is populated on every Hour record and holds the same hour slot on the AEST clock: each record's value equals the next record's `KilowattHourUsage`. Its day total matches `SummaryTotals`, the AEST day (see *Meter data arrives in AEST days* below). Not checked against our own account during AEDT. |
 | Dollar data split | `DollarValueUsage` is only populated on the Day-level record, not on individual Hour records. kWh data is only on Hour records. |
 | `index=0` date is UTC, not local | `StartDate` on an `index=0` response is a UTC timestamp representing midnight Hobart-local time. Comparing the raw `YYYY-MM-DD` prefix to today's date will fail during Hobart business hours (before ~14:00–15:00 UTC). Convert to `Australia/Hobart` local time before comparing. |
 | Meter data arrives in AEST days | Aurora delivers meter data per NEM day (14:00–14:00 UTC, AEST year-round), the morning after. A `/usage/day` response, however, covers the **local** day, starting at Hobart midnight. During AEDT that's 13:00 UTC, so the local day's first hour (00:00–01:00 AEDT) arrives with the *previous* delivery and the remaining hours a day later. Until then, those hours have `KilowattHourUsage: null`. A day is complete only when every Hour record is non-null. "Any non-zero hour" is true a day early (#17). Observed 2026-10-06. |

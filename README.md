@@ -193,6 +193,8 @@ On first login the integration exchanges your credentials for a longer-lived tok
 
 If your session fully expires (HA will show a notification), click through the re-authentication flow — the same login link approach as initial setup. Once re-authentication succeeds the new tokens are immediately saved and the integration reloads.
 
+Only one thing counts as an expired session: Aurora rejecting the refresh token (HTTP 401/403). From 1.0.17, any other problem while refreshing leaves your saved login untouched, including a network drop, a timeout, or Aurora being down or showing a maintenance page. The Aurora sensors go unavailable and the integration tries again at the next hourly poll. If it happens while Home Assistant is starting, the integration shows as retrying setup, and Home Assistant keeps retrying on its own. Either way it recovers without you doing anything once Aurora is reachable again.
+
 You must re-authenticate with the **same Aurora+ account** the integration was originally set up with — logging in with a different account is rejected (this prevents another account's data being mixed into your existing sensors and Energy Dashboard statistics). To switch accounts, remove the integration and add it again.
 
 The account is matched on your Aurora+ `CustomerID`. If you move premises or re-contract, your `ServiceAgreementID` changes but your `CustomerID` does not, so re-authentication still succeeds and the new `ServiceAgreementID` is saved automatically. (Versions 1.0.7–1.0.8 matched on `ServiceAgreementID` and could reject the correct account — see [Troubleshooting](#troubleshooting).)
@@ -243,6 +245,14 @@ The login was rejected by Aurora+. Try again with a fresh login link (reload the
 ### Re-authentication is required roughly once a month
 
 Fixed in 1.0.10. Upgrade, then re-authenticate once to seed a fresh token chain. See [Re-authentication](#re-authentication) for the detail.
+
+### Asked to re-authenticate after an internet outage or Aurora maintenance
+
+Fixed in 1.0.17. Earlier versions treated almost any failed token refresh as an expired login: a network drop, a timeout, or an error page from Aurora during an outage. Home Assistant then asked you to re-authenticate even though your login was still valid. If it happened while Home Assistant was starting, the integration failed to load and stayed down until you re-authenticated. If Aurora answered a refresh with no new token, an earlier version could also save an empty access token. The integration then failed every poll without ever asking you to log in again.
+
+From 1.0.17 only a rejected refresh token (HTTP 401/403) asks you to log in again, and a failed refresh never changes your saved login. Anything else is retried at the next hourly poll; see [Re-authentication](#re-authentication). If 1.0.17 asks you to re-authenticate, your session really has expired.
+
+If the sensors stay unavailable after updating while the Aurora+ app works, and Home Assistant never asks you to log in, an earlier version probably saved an empty access token. Remove the integration and add it again. The Energy Dashboard statistics stay in the recorder, and the new setup backfills the last 7 days.
 
 ### Re-authentication prompt reappears immediately after submitting a new token
 Ensure you are running the latest version of this integration. Earlier versions had a bug where the new tokens were not saved after re-auth, causing the integration to immediately fail again with the old expired credentials on reload.
