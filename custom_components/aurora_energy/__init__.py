@@ -9,8 +9,10 @@ import logging
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_track_utc_time_change
+from homeassistant.util import dt as dt_util
 
 from .api import AuroraApiClient
 from .const import (
@@ -18,6 +20,7 @@ from .const import (
     CONF_ID_TOKEN,
     CONF_SERVICE_AGREEMENT_ID,
     DOMAIN,
+    TZ_HOBART,
 )
 from .coordinator import AuroraCoordinator
 
@@ -39,7 +42,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         entry=entry,
     )
 
-    coordinator = AuroraCoordinator(hass, client, entry)
+    # Resolve the zone once, in the executor: constructing a ZoneInfo reads
+    # tzdata from disk, which would block the event loop.
+    tz = await dt_util.async_get_time_zone(TZ_HOBART)
+    if tz is None:
+        raise ConfigEntryNotReady(f"Time zone {TZ_HOBART} is not available")
+
+    coordinator = AuroraCoordinator(hass, client, entry, tz)
 
     # This performs the first data fetch and raises ConfigEntryNotReady if it fails.
     await coordinator.async_config_entry_first_refresh()
