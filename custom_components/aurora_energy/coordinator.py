@@ -33,13 +33,16 @@ from .api import AuroraApiClient, TokenRefreshError
 from .const import (
     BACKFILL_DAYS,
     DOMAIN,
+    SENSOR_ACTUAL_BALANCE,
     SENSOR_AUTO_PAYMENT,
+    SENSOR_BALANCE_UPDATED,
     SENSOR_BILL_DUE,
     SENSOR_BP_COST,
     SENSOR_BP_KWH,
     SENSOR_BP_SOLAR_EARNINGS,
     SENSOR_BP_SOLAR_KWH,
     SENSOR_DIRECT_DEBIT,
+    SENSOR_NEXT_BILL_DATE,
     SENSOR_OVERDUE_AMOUNT,
     SENSOR_PH_END,
     SENSOR_PH_EVENT_NAME,
@@ -79,11 +82,16 @@ def _parse_date_field(dt_str: Optional[str]) -> Optional[datetime.datetime]:
     """Parse a date or datetime string from the Aurora API to a UTC-aware datetime.
 
     Handles full ISO datetimes ("2026-05-15T00:00:00") and date-only strings
-    ("2026-05-15"). Date-only values are treated as midnight UTC.
+    ("2026-05-15"). Date-only values are treated as midnight UTC. Anything
+    else (a non-string, an impossible date) gives None, so one malformed
+    field reads unknown instead of failing the whole update.
     """
-    if not dt_str:
+    if not dt_str or not isinstance(dt_str, str):
         return None
-    dt = dt_util.parse_datetime(dt_str)
+    try:
+        dt = dt_util.parse_datetime(dt_str)
+    except ValueError:
+        dt = None
     if dt:
         return dt_util.as_utc(dt)
     try:
@@ -567,6 +575,9 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         data[SENSOR_UNPAID_BILLS]      = premise.get("NumberOfUnpaidBills")
         data[SENSOR_TARIFF_PERIOD_END] = _parse_date_field(premise.get("CurrentTimeOfUsePeriodEndDate"))
         data[SENSOR_UNREAD_NOTIFS]     = customer.get("UnreadNotificationsCount")
+        data[SENSOR_ACTUAL_BALANCE]    = premise.get("ActualBalance")
+        data[SENSOR_NEXT_BILL_DATE]    = _parse_date_field(premise.get("BillNextRun"))
+        data[SENSOR_BALANCE_UPDATED]   = _parse_date_field(premise.get("BalanceLastUpdatedDate"))
 
         # Usage summary totals
         summary = usage.get("SummaryTotals", {})
