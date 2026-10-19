@@ -252,7 +252,7 @@ Fixed in 1.0.17. Earlier versions treated almost any failed token refresh as an 
 
 From 1.0.17 only a rejected refresh token (HTTP 401/403) asks you to log in again, and a failed refresh never changes your saved login. Anything else is retried at the next hourly poll; see [Re-authentication](#re-authentication). If 1.0.17 asks you to re-authenticate, your session really has expired.
 
-If the sensors stay unavailable after updating while the Aurora+ app works, and Home Assistant never asks you to log in, an earlier version probably saved an empty access token. Remove the integration and add it again. The Energy Dashboard statistics stay in the recorder, and the new setup backfills the last 7 days.
+If an earlier version saved an empty access token, 1.0.17 repairs it on the first poll after updating: it gets a new access token with your saved refresh token, without asking you to log in. If that refresh token has also expired, Home Assistant asks you to re-authenticate instead of failing silently.
 
 ### Re-authentication prompt reappears immediately after submitting a new token
 Ensure you are running the latest version of this integration. Earlier versions had a bug where the new tokens were not saved after re-auth, causing the integration to immediately fail again with the old expired credentials on reload.

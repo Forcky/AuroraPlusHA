@@ -448,9 +448,10 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self.client._service_agreement_id = _sa_id
             usage_data = await self.client.async_get_usage(timespan="day", index=-1, nmi=_nmi)
         except TokenRefreshError as err:
-            # Only a 401/403 from the refresh endpoint. A refresh that failed
-            # any other way (AuroraApiError: network, timeout, 5xx, bad body)
-            # becomes UpdateFailed below and is retried at the next poll.
+            # Only a 401/403 from the refresh endpoint, or no stored token at
+            # all. A refresh that failed any other way (AuroraApiError:
+            # network, timeout, 5xx, bad body) becomes UpdateFailed below and
+            # is retried at the next poll.
             raise ConfigEntryAuthFailed(
                 "Aurora+ authentication tokens expired — please re-authenticate"
             ) from err
