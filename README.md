@@ -10,7 +10,7 @@ A custom Home Assistant integration that pulls your Aurora Energy Tasmania billi
 - Real-time T93 tariff period sensor (`peak` / `off_peak`), DST-correct
 - Power Hours demand-response program sensors (status, timeslot, savings)
 - Billing period totals (cumulative kWh and cost for the current billing cycle)
-- Historical statistics for the Energy Dashboard (backfills up to 7 days on every HA restart to cover gaps; today's partial hourly data updated each poll)
+- Historical statistics for the Energy Dashboard (backfills up to 7 days on every HA restart to cover gaps; today's partial hourly data updated each poll), per tariff for every tariff on your account
 - Polling aligned to the clock hour — sensors update within seconds of Aurora+ events rather than up to 59 minutes late
 - [Notification blueprints](#notification-blueprints) for Power Hours and T93 peak/off-peak changes
 
@@ -203,10 +203,24 @@ The following additional statistics are available for use in custom dashboard ca
 | `aurora_energy:t93peak_dollars` | T93 peak tariff cost |
 | `aurora_energy:t93offpeak_dollars` | T93 off-peak tariff cost |
 | `aurora_energy:solar_feedin_dollars` | Solar feed-in earnings |
+| `aurora_energy:<tariff>_kwh` | Consumption on any other tariff on your account, e.g. `aurora_energy:t62_kwh` (see below) |
+| `aurora_energy:<tariff>_dollars` | That tariff's cost, e.g. `aurora_energy:t62_dollars` |
 
 Aurora's API only exposes dollar values at the day level, so per-hour cost statistics are produced by distributing each tariff's day total across hours weighted by that hour's share of the day's kWh for the same tariff.
 
-> **Note for existing installs:** The per-tariff `*_dollars` statistics (`t31_dollars`, `t41_dollars`, `t93peak_dollars`, `t93offpeak_dollars`) and the corrected `total_dollars` / `solar_feedin_dollars` distribution were introduced in recent updates. Existing installs will not automatically backfill or correct these because the backfill guard sees previously injected dates as already processed. To trigger a fresh backfill, delete `.storage/aurora_energy_<entry_id>_backfill` from your HA config directory and restart Home Assistant.
+**Other tariffs.** Any tariff Aurora meters for your account that has no statistic of its own above (for example a business, irrigation or newer residential tariff) gets a pair of statistics automatically:
+
+- **IDs:** `aurora_energy:<tariff>_kwh` and `aurora_energy:<tariff>_dollars`. `<tariff>` is Aurora's tariff code in lowercase, with anything other than letters and digits replaced by `_`. So `T62` becomes `aurora_energy:t62_kwh`, and `BUS-LV 2` becomes `aurora_energy:bus_lv_2_kwh`.
+- **Names:** `Aurora <TARIFF> Energy` and `Aurora <TARIFF> Cost`, e.g. **Aurora T62 Energy**.
+- **When they're recorded:** on every day Aurora's hourly data includes the tariff. If the tariff leaves your account (a plan change, say), its statistics stop and their history stays. If it comes back, its running total carries on from where it stopped.
+- **What's not included:** the daily supply charge (`Other` in Aurora's data) is dollars-only and gets no statistic of its own.
+- **Totals:** `aurora_energy:total_kwh` and `aurora_energy:total_dollars` already include these tariffs, as they always have.
+
+To use one in the Energy Dashboard, go to **Settings → Dashboards → Energy**. Under **Electricity grid**, add a grid consumption source and pick **Aurora T62 Energy** (or search `aurora_energy`). To track its cost, choose **Use an entity tracking the total costs** and pick **Aurora T62 Cost**. Use either `aurora_energy:total_kwh` or the per-tariff statistics as grid consumption, not both: the total already includes every tariff, so adding both counts that energy twice. **Developer tools → Statistics** lists every `aurora_energy` statistic your install has.
+
+> **Note for existing installs (1.1.0):** Statistics for other tariffs are new in 1.1.0. Update, then **restart Home Assistant**. The startup check re-injects the last 7 days, so the new statistics are backfilled for those 7 days automatically. You don't need to delete anything from `.storage`. Days older than that can't be recovered. If yesterday isn't fully delivered by Aurora at the time of the restart, it is filled in by the regular poll once it is. Statistics for T31, T41, T93 and solar are unchanged.
+
+> **Note for existing installs:** The per-tariff `*_dollars` statistics (`t31_dollars`, `t41_dollars`, `t93peak_dollars`, `t93offpeak_dollars`) and the corrected `total_dollars` / `solar_feedin_dollars` distribution were introduced in earlier updates. Every restart re-injects the last 7 days, which brings those days up to date. Days older than that keep whatever an older version recorded.
 
 > **HA 2026.11 compatibility:** This integration uses the updated `StatisticMeanType` API required by Home Assistant Core 2026.11. Update to the latest version of this integration before upgrading to HA 2026.11 or later.
 
@@ -254,8 +268,9 @@ This integration supports multiple Aurora tariff structures:
 | **T31** | Flat rate general power |
 | **T41** | Flat rate controlled load (heating) |
 | **T140** | Solar feed-in / export (detected automatically) |
+| **Any other tariff** | Energy Dashboard statistics only, generated from the tariff code (see [Energy Dashboard](#energy-dashboard)) |
 
-The integration automatically detects which tariffs are active on your account. T31/T41 and T93 breakdown sensors are disabled by default — enable only what's relevant to your account.
+The integration automatically detects which tariffs are active on your account. T31/T41 and T93 breakdown sensors are disabled by default — enable only what's relevant to your account. Other tariffs have no sensors, but their consumption is included in **Daily Total Usage**.
 
 ### T93 peak/off-peak schedule
 
