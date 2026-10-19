@@ -335,6 +335,22 @@ def _t93_component(summary: dict[str, Any], tariff: str) -> Any:
     return 0.0 if sibling in summary else None
 
 
+def _consumption_kwh(kwh_by_tariff: dict[str, Any]) -> Optional[float]:
+    """Total consumption in a KilowattHourUsage dict: every tariff except T140.
+
+    Aurora's own "Total" is not used, because at the day level it includes
+    T140 solar export (API.md's sample: 5.117 + 15.206 + 12.937 = 33.26).
+    Summing the components is right however Aurora defines Total. With no
+    components the result is None, not Total, which would count export again.
+    """
+    values = [
+        float(v)
+        for k, v in kwh_by_tariff.items()
+        if k not in (TARIFF_T140, TARIFF_TOTAL) and v is not None
+    ]
+    return round(sum(values), 3) if values else None
+
+
 def _distribute_day_dollars_by_kwh(
     hourly: list[dict[str, Any]],
     summary_totals: Optional[dict[str, Any]],
@@ -557,7 +573,9 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         kwh_summary: dict[str, Any] = summary.get("KilowattHourUsage") or {}
         dollar_summary: dict[str, Any] = summary.get("DollarValueUsage") or {}
 
-        data["total_kwh"] = kwh_summary.get(TARIFF_TOTAL)
+        # Consumption excludes solar export, which Aurora's kWh "Total" counts.
+        # The dollar Total is the net cost: supply charge in, solar credit out.
+        data["total_kwh"] = _consumption_kwh(kwh_summary)
         data["total_dollars"] = dollar_summary.get(TARIFF_TOTAL)
         data["t41_kwh"] = kwh_summary.get(TARIFF_T41)
         data["t41_dollars"] = dollar_summary.get(TARIFF_T41)
@@ -583,7 +601,7 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         bp_summary = (billing_period or {}).get("SummaryTotals") or {}
         bp_kwh = bp_summary.get("KilowattHourUsage") or {}
         bp_dollars = bp_summary.get("DollarValueUsage") or {}
-        data[SENSOR_BP_KWH]  = bp_kwh.get(TARIFF_TOTAL)
+        data[SENSOR_BP_KWH]  = _consumption_kwh(bp_kwh)
         data[SENSOR_BP_COST] = bp_dollars.get(TARIFF_TOTAL)
         t140_bp = bp_dollars.get(TARIFF_T140)
         data[SENSOR_BP_SOLAR_KWH]      = bp_kwh.get(TARIFF_T140)

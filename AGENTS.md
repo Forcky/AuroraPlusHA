@@ -50,6 +50,7 @@ These are all documented in `API.md`; respect them when modifying coordinator lo
 - `NoDataFlag` is unreliable — use `_has_real_kwh_data()` to check actual record values instead of trusting the flag.
 - `index=0` `StartDate` is a UTC timestamp representing midnight Hobart-local. Comparing the raw `YYYY-MM-DD` prefix to today's date silently fails during Hobart business hours (before 13:00–14:00 UTC). Always convert to `Australia/Hobart` first with `_hobart_date(date_key, self._tz)` — see `_fetch_and_inject_today`.
 - Meter data is delivered per **AEST/NEM day**, but `/usage/day` records cover the **local** day. Undelivered hours carry `KilowattHourUsage: null`. During AEDT the local day's first hour lands a day early, and `SummaryTotals` (also AEST-day) is out by one hour from the Hour records. So never use it to test completeness (#17).
+- `SummaryTotals.KilowattHourUsage.Total` **includes T140 solar export** at the day level, so it is not consumption. Use `_consumption_kwh()`, which sums every tariff except T140 and `Total` and returns None when there are none. Never fall back to `Total`. The dollar `Total` is the net cost (supply charge in, solar credit out) and is used as-is.
 - Power Hours datetimes are **naive Australia/Hobart** (no timezone suffix). Use `_parse_hobart_naive` to localize before converting to UTC.
 
 ### T93 tariff timezone — important

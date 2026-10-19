@@ -74,8 +74,8 @@ If setup succeeds, a device called **Aurora Energy** will appear with all sensor
 | Average Daily Usage | Average daily spend | AUD |
 | Bill Total Amount | Most recent bill total | AUD |
 | Usage Days Remaining | Days remaining in billing period | d |
-| Daily Total Usage | Previous day's consumption | kWh |
-| Daily Total Cost | Previous day's energy cost | AUD |
+| Daily Total Usage | Previous day's consumption from the grid, all tariffs except solar export | kWh |
+| Daily Total Cost | Previous day's net cost as Aurora reports it: energy plus the daily supply charge, minus the solar feed-in credit | AUD |
 | Solar Feed-in | Previous day's solar export | kWh |
 | Solar Feed-in Earnings | Previous day's solar feed-in credit | AUD |
 | T93 Tariff Period | Current tariff period: `peak` or `off_peak` | — |
@@ -86,8 +86,8 @@ If setup succeeds, a device called **Aurora Energy** will appear with all sensor
 | Power Hour Selection Deadline | Deadline to select a timeslot | — |
 | Power Hour First Slot Start | Start of the earliest timeslot you can still book — book before this to get first pick | — |
 | Power Hour Total Savings | Lifetime savings from Power Hours events | AUD |
-| Billing Period Usage | Total kWh consumed in current billing cycle | kWh |
-| Billing Period Cost | Total cost in current billing cycle | AUD |
+| Billing Period Usage | kWh consumed from the grid in the current billing cycle, all tariffs except solar export | kWh |
+| Billing Period Cost | Net cost of the current billing cycle as Aurora reports it, including supply charges and the solar credit | AUD |
 | Billing Period Solar Feed-in | Total solar exported in current billing cycle | kWh |
 | Billing Period Solar Earnings | Total solar feed-in credit in current billing cycle | AUD |
 | Bill Due Date | Date the current bill is due | — |
@@ -280,6 +280,10 @@ This was a bug in 1.0.12 and earlier ([#17](https://github.com/Forcky/AuroraPlus
 
 ### Power Hour sensors show "Unknown"
 Power Hour sensors show `Unknown` when no Power Hours event is currently active or upcoming — this is normal. The **Power Hour Status** sensor will show `no_event` once the coordinator has fetched successfully at least once. If it remains `Unknown` after the first hourly refresh, check **Settings → System → Logs** and filter by `aurora_energy` for warnings.
+
+### Daily Total Usage or Billing Period Usage dropped after updating to 1.0.17 (solar accounts)
+
+Fixed in 1.0.17. Aurora's own kWh total also counts the energy you exported to the grid. Earlier versions showed that total, so on a solar account **Daily Total Usage** and **Billing Period Usage** were too high by your solar export. They now add up the consumption tariffs only, so they drop by the export amount. Values recorded before the update are not rewritten, and each sensor's own history may show one downward step at the update. The Energy Dashboard is not affected: it uses `aurora_energy:total_kwh`, which has never included export.
 
 ### Daily Total Usage shows 0.000 kWh
 - This is expected before ~8–9am AEST — Aurora has not yet released that day's data.

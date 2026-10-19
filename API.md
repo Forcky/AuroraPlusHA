@@ -504,7 +504,11 @@ Returns metered usage totals for the entire current billing cycle (typically a q
 }
 ```
 
-**Note:** `Total` in `KilowattHourUsage` excludes T140 (solar). `Total` in `DollarValueUsage` includes the supply charge (`Other`). T140 dollars are negative (credit).
+**Note:** The example above is illustrative (round numbers), not a recorded response.
+- **`KilowattHourUsage.Total` includes T140 (solar export) at the day level.** In the real `/usage/day` sample above, 5.117 (T140) + 15.206 + 12.937 = 33.26. Another client's recorded day agrees: 9.014 + 15.39 + 5.561 = 29.965. So does its recorded week summary: 85.587 + 91.008 + 34.838 = 211.433. *(fixture)*
+- In the illustrative example, `Total` excludes T140 (310.1 + 220.5 = 530.6). It is unconfirmed which definition the real billing-period response uses.
+- The integration therefore computes its kWh totals as the sum of the tariff components, excluding T140 and `Total`. That gives consumption either way.
+- `Total` in `DollarValueUsage` is the **net cost**: energy, plus the supply charge (`Other`), plus the negative T140 credit. In the day sample, 2.537 + 4.590 + 1.512 − 0.449 = 8.190.
 
 ---
 
@@ -552,8 +556,8 @@ Returns which payment methods are currently active for an account.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `KilowattHourUsage` | object | kWh by tariff key + `Total` |
-| `DollarValueUsage` | object | Dollars by tariff key + `Other` (supply charge) + `Total` |
+| `KilowattHourUsage` | object | kWh by tariff key + `Total`. At the day level, `Total` **includes** T140 export, so it is not consumption (see *`Total` kWh includes solar export* under Known quirks) |
+| `DollarValueUsage` | object | Dollars by tariff key + `Other` (supply charge) + `Total` (net cost: includes `Other` and the negative T140 credit) |
 | `TariffTypes` | array | List of active tariff keys for this account |
 | `DayContainsSubstitutedUsage` | bool | Whether any interval used substituted (estimated) data |
 
@@ -617,7 +621,7 @@ Tariff keys appear as keys within `KilowattHourUsage` and `DollarValueUsage` obj
 | `T41` | Flat rate — Controlled load (heating) |
 | `T140` | Solar feed-in / export — **negative dollar value = earnings** |
 | `Other` | Supply (daily fixed) charge — appears in `DollarValueUsage` `SummaryTotals` only, **not a tariff** |
-| `Total` | Sum of all consumption tariffs — appears in `SummaryTotals` only |
+| `Total` | Appears in `SummaryTotals` only. In `KilowattHourUsage` it is the sum of **all** tariffs including T140 export (day level; the billing-period form is unconfirmed), so it is not consumption. In `DollarValueUsage` it is the net cost, including `Other` and the T140 credit |
 
 **Important:** `T140` kWh represents solar energy exported to the grid (always positive). The corresponding `DollarValueUsage.T140` is **negative** because it is a credit to the customer.
 
@@ -668,6 +672,7 @@ Querying with `index=-1` returns the most recent available completed period. `in
 | Meter data arrives in AEST days | Aurora delivers meter data per NEM day (14:00–14:00 UTC, AEST year-round), the morning after. A `/usage/day` response, however, covers the **local** day, starting at Hobart midnight. During AEDT that's 13:00 UTC, so the local day's first hour (00:00–01:00 AEDT) arrives with the *previous* delivery and the remaining hours a day later. Until then, those hours have `KilowattHourUsage: null`. A day is complete only when every Hour record is non-null. "Any non-zero hour" is true a day early (#17). Observed 2026-10-06. |
 | Concurrent requests return shifted data | When several `/usage/day` requests overlap, some responses come back with every `StartTime` correct but the hourly values taken from 1–2 hours **earlier**. For example, index=-2's 13:00Z hour carried the 11:00Z value, and index=0's first hour carried the previous day's last hour. Sequential requests are stable and identical. Reproduced 2026-10-07: 3 of 8 responses differed in one concurrent round of 9 requests and 1 of 8 in another, while sequential passes matched exactly. There's no error or flag in the response, so **never issue requests concurrently**. The client serialises every GET. |
 | `SummaryTotals` is the AEST day | `SummaryTotals` is summed over the AEST/NEM day, not the local-day Hour records. During AEDT it is offset by one hour from the records: it includes the next local day's first hour and excludes this day's. It differs from the sum of the Hour records by that hour's difference, e.g. 37.128 vs 36.951. For `index=0` it reads all zeros even when the first hour is already present. So don't use it to check completeness, and expect daily sensors (from `SummaryTotals`) and the Energy Dashboard (from Hour records) to disagree slightly during AEDT. |
+| `Total` kWh includes solar export | `SummaryTotals.KilowattHourUsage.Total` at the day level is the sum of every tariff **including T140 export**: 5.117 + 15.206 + 12.937 = 33.26 in our real sample, and the same holds in another client's recorded day and week. It is not consumption. Sum the tariff components except T140 and `Total` instead; the integration does this from 1.0.17 (earlier versions over-reported Daily/Billing Period Usage by the export). The billing-period form is unconfirmed. The dollar `Total` is the net cost, which includes `Other` and the T140 credit. |
 | `T93PEAK` absent on weekends | On weekend days `SummaryTotals` omits the `T93PEAK` key entirely (from both `KilowattHourUsage` and `DollarValueUsage`) rather than reporting 0 — no peak window exists Sat/Sun. Absence alongside a present `T93OFFPEAK` sibling means 0, not missing data. |
 
 ---
@@ -681,10 +686,11 @@ summary = usage_response.get("SummaryTotals", {})
 kwh = summary.get("KilowattHourUsage", {})
 dollars = summary.get("DollarValueUsage", {})
 
-total_kwh = kwh.get("Total")             # All consumption combined
+# Consumption: every tariff except T140. Aurora's kWh "Total" also counts T140.
+total_kwh = sum(v for k, v in kwh.items() if k not in ("T140", "Total") and v is not None)
 solar_kwh = kwh.get("T140")              # Solar exported to grid
 
-total_dollars = dollars.get("Total")     # Everything including supply charge
+total_dollars = dollars.get("Total")     # Net: energy + supply charge - solar credit
 solar_earnings = abs(dollars.get("T140", 0))  # Credit for solar export
 supply_charge = dollars.get("Other", 0)  # Daily fixed supply charge
 ```
