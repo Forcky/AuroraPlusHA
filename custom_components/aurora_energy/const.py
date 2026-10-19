@@ -68,6 +68,9 @@ SENSOR_OVERDUE_AMOUNT    = "overdue_amount"
 SENSOR_UNPAID_BILLS      = "unpaid_bills"
 SENSOR_TARIFF_PERIOD_END = "tariff_period_end"
 SENSOR_UNREAD_NOTIFS     = "unread_notifications"
+SENSOR_ACTUAL_BALANCE    = "actual_balance"
+SENSOR_NEXT_BILL_DATE    = "next_bill_date"
+SENSOR_BALANCE_UPDATED   = "balance_last_updated"
 
 # Group B: billing period totals (/usage/billing-period)
 SENSOR_BP_KWH            = "billing_period_kwh"

@@ -4,7 +4,7 @@ A custom Home Assistant integration that pulls your Aurora Energy Tasmania billi
 
 ## What it does
 
-- Estimated balance, amount owed, unbilled amount
+- Estimated and actual balance, amount owed, unbilled amount, next bill date
 - Daily energy usage (kWh) and cost
 - Solar feed-in (kWh exported and earnings)
 - Real-time T93 tariff period sensor (`peak` / `off_peak`), DST-correct
@@ -12,6 +12,7 @@ A custom Home Assistant integration that pulls your Aurora Energy Tasmania billi
 - Billing period totals (cumulative kWh and cost for the current billing cycle)
 - Historical statistics for the Energy Dashboard (backfills up to 7 days on every HA restart to cover gaps; today's partial hourly data updated each poll)
 - Polling aligned to the clock hour — sensors update within seconds of Aurora+ events rather than up to 59 minutes late
+- [Notification blueprints](#notification-blueprints) for Power Hours and T93 peak/off-peak changes
 
 ---
 
@@ -60,7 +61,7 @@ HACS will notify you of future updates so you can update with a single click.
 4. Search for **Aurora Energy Tasmania**
 5. Click the **Log in to Aurora+** link, log in (tick **Keep me logged in**), copy the full URL from your browser's address bar, and paste it into Home Assistant
 
-If setup succeeds, a device called **Aurora Energy** will appear with all sensors populated.
+If setup succeeds, a device called **Aurora Energy** will appear with all sensors populated. Its serial number is the service agreement ID of your active Aurora+ premise.
 
 ---
 
@@ -69,6 +70,7 @@ If setup succeeds, a device called **Aurora Energy** will appear with all sensor
 | Sensor | Description | Unit |
 |--------|-------------|------|
 | Estimated Balance | Current account balance | AUD |
+| Actual Balance | Account balance as at Aurora's last daily update (see **Balance Last Updated**). **Estimated Balance** is the figure the Aurora+ app shows as *Balance* | AUD |
 | Amount Owed | Outstanding amount due | AUD |
 | Unbilled Amount | Charges not yet on a bill | AUD |
 | Average Daily Usage | Average daily spend | AUD |
@@ -91,6 +93,7 @@ If setup succeeds, a device called **Aurora Energy** will appear with all sensor
 | Billing Period Solar Feed-in | Total solar exported in current billing cycle | kWh |
 | Billing Period Solar Earnings | Total solar feed-in credit in current billing cycle | AUD |
 | Bill Due Date | Date the current bill is due | — |
+| Next Bill Date | When Aurora+ next issues a bill | — |
 | Overdue Amount | Amount currently overdue | AUD |
 | Unpaid Bills | Count of unpaid bills | — |
 
@@ -127,6 +130,44 @@ The following sensors exist but are disabled by default. Enable them via **Setti
 | Unread Notifications | Number of unread Aurora+ notifications | All accounts |
 | Direct Debit | Whether a direct debit arrangement is active (`active`/`inactive`) | All accounts |
 | Auto Payment | Whether auto-payment (card) is configured (`active`/`inactive`) | All accounts |
+| Balance Last Updated | When Aurora+ last updated **Actual Balance** (diagnostic) | All accounts |
+
+---
+
+## Notification blueprints
+
+Two automation blueprints turn the sensors above into notifications. Click a button to import one into Home Assistant (or go to **Settings → Automations & scenes → Blueprints → Import blueprint** and paste the file's URL), then create an automation from it.
+
+### Power Hour notifications
+
+[![Open your Home Assistant instance and show the blueprint import dialog with a specific blueprint pre-filled.](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FForcky%2FAuroraPlusHA%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Faurora_energy%2Fpower_hour.yaml)
+
+Notifies you when:
+
+- Aurora+ offers a new Power Hour (**Power Hour Status** changes to `selection_pending`)
+- the selection deadline is within your chosen lead time (default 1 day) and you still haven't booked a slot
+- your Power Hour starts (`active`), and when it ends
+
+You pick the **Power Hour Status** and **Power Hour Selection Deadline** sensors, the reminder lead time and the notification action. Messages include the event name, the offered slots, the earliest slot you can still book and the deadline, read from the other Power Hour sensors. Those are in a collapsed *Sensors used in messages* section, pre-filled with the integration's entity IDs; change them only if you renamed the entities. Status changes arrive with the hourly poll, so start and end notifications come within seconds of the hour. A status that drops to `unavailable` for a failed poll or a restart doesn't trigger anything.
+
+### T93 tariff period notifications
+
+[![Open your Home Assistant instance and show the blueprint import dialog with a specific blueprint pre-filled.](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FForcky%2FAuroraPlusHA%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Faurora_energy%2Ftariff_period.yaml)
+
+Notifies you when the **T93 Tariff Period** sensor switches between `peak` and `off_peak` (both by default, or just one). If you enable the **T93 Tariff Period End** sensor (disabled by default), the message also says when the new period ends, for example *Off-peak pricing has started and runs until 08:00 tomorrow.* Times are local, so during daylight saving they are an hour later than the AEST schedule in [Tariff notes](#t93-peakoff-peak-schedule).
+
+### Notification action
+
+Both blueprints default to a notification in Home Assistant itself. Each new notification replaces the previous one from the same blueprint. To send them to your phone instead, replace the action with, for example:
+
+```yaml
+- action: notify.mobile_app_your_phone
+  data:
+    title: "{{ title }}"
+    message: "{{ message }}"
+```
+
+The blueprints also provide `notification_type` (Power Hour: `offer`, `reminder`, `start` or `end`) and `period` (tariff: `peak` or `off_peak`) if you want to handle them differently.
 
 ---
 
@@ -265,6 +306,7 @@ This was a bug in 1.0.12 and earlier ([#17](https://github.com/Forcky/AuroraPlus
 
 ### Sensors show "Unknown"
 - **Estimated Balance** and **Usage Days Remaining** may be `null` for some account types — this is normal behaviour and not an error.
+- **Actual Balance**, **Next Bill Date** and **Balance Last Updated** show `Unknown` if Aurora+ doesn't send that field for your account.
 - **Usage sensors** only update once per day when Aurora releases meter data (typically 8–9am AEST). They will show `Unknown` or yesterday's value until then.
 - **T93 Peak Usage** reports **0 kWh** for weekend days — there is no peak window on Saturday or Sunday, so zero is the correct value. **T93 Peak Cost** still shows `Unknown` on those days because Aurora omits the dollar figure entirely from its response.
 

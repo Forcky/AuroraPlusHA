@@ -1,0 +1,206 @@
+blueprint:
+  name: Aurora Energy — Power Hour notifications
+  description: >-
+    Sends a notification when Aurora+ offers a new Power Hour, when the
+    selection deadline is close and you haven't booked a slot, and when your
+    Power Hour starts and ends. Needs the Aurora Energy Tasmania (Aurora+)
+    integration.
+
+
+    Your notification action can use `{{ title }}` and `{{ message }}`, and
+    `{{ notification_type }}` (`offer`, `reminder`, `start` or `end`) if you
+    want to handle the four differently.
+  domain: automation
+  source_url: https://github.com/Forcky/AuroraPlusHA/blob/main/blueprints/automation/aurora_energy/power_hour.yaml
+  homeassistant:
+    min_version: 2025.11.0
+  input:
+    status_sensor:
+      name: Power Hour Status sensor
+      description: The integration's **Power Hour Status** sensor.
+      selector:
+        entity:
+          filter:
+            - integration: aurora_energy
+              domain: sensor
+    deadline_sensor:
+      name: Power Hour Selection Deadline sensor
+      description: The integration's **Power Hour Selection Deadline** sensor.
+      selector:
+        entity:
+          filter:
+            - integration: aurora_energy
+              domain: sensor
+              device_class: timestamp
+    reminder_lead_time:
+      name: Reminder lead time
+      description: >-
+        How long before the selection deadline to remind you, if you still
+        haven't booked a slot.
+      default:
+        days: 1
+        hours: 0
+        minutes: 0
+        seconds: 0
+      selector:
+        duration:
+          enable_day: true
+    notify_action:
+      name: Notification action
+      description: >-
+        What to run for each notification. Use `{{ title }}` and
+        `{{ message }}` in it, for example in a `notify.mobile_app_…` action.
+        The default creates a notification in Home Assistant.
+      default:
+        - action: persistent_notification.create
+          data:
+            notification_id: aurora_energy_power_hour
+            title: "{{ title }}"
+            message: "{{ message }}"
+      selector:
+        action: {}
+    message_sensors:
+      name: Sensors used in messages
+      description: >-
+        These fill in the event name and times. The defaults are the
+        integration's own entity IDs; change them only if you renamed those
+        entities.
+      collapsed: true
+      input:
+        event_sensor:
+          name: Power Hour Event sensor
+          default: sensor.aurora_energy_power_hour_event
+          selector:
+            entity:
+              filter:
+                - integration: aurora_energy
+                  domain: sensor
+        start_sensor:
+          name: Power Hour Start sensor
+          default: sensor.aurora_energy_power_hour_start
+          selector:
+            entity:
+              filter:
+                - integration: aurora_energy
+                  domain: sensor
+                  device_class: timestamp
+        end_sensor:
+          name: Power Hour End sensor
+          default: sensor.aurora_energy_power_hour_end
+          selector:
+            entity:
+              filter:
+                - integration: aurora_energy
+                  domain: sensor
+                  device_class: timestamp
+        first_slot_sensor:
+          name: Power Hour First Slot Start sensor
+          default: sensor.aurora_energy_power_hour_first_slot_start
+          selector:
+            entity:
+              filter:
+                - integration: aurora_energy
+                  domain: sensor
+                  device_class: timestamp
+
+# One status change can fire two triggers (a Power Hour ending while another
+# offer is open), so queue rather than drop the second run. Queued runs go in
+# trigger order, which is why "end" is listed before "offer": the offer is
+# the notification left showing.
+mode: queued
+max: 10
+
+trigger_variables:
+  status_entity: !input status_sensor
+  deadline_entity: !input deadline_sensor
+  lead_time: !input reminder_lead_time
+
+variables:
+  event_entity: !input event_sensor
+  start_entity: !input start_sensor
+  end_entity: !input end_sensor
+  first_slot_entity: !input first_slot_sensor
+
+triggers:
+  # Changes to or from unavailable (a failed poll, a restart, a reload) are
+  # not Power Hour events, so they are excluded throughout.
+  - trigger: state
+    id: start
+    entity_id: !input status_sensor
+    to: active
+    not_from:
+      - unavailable
+      - unknown
+  - trigger: state
+    id: end
+    entity_id: !input status_sensor
+    from: active
+    not_to:
+      - unavailable
+      - unknown
+  - trigger: state
+    id: offer
+    entity_id: !input status_sensor
+    to: selection_pending
+    not_from:
+      - unavailable
+      - unknown
+  # The deadline of an offer you haven't booked is within the lead time.
+  # Re-evaluated every minute because it uses now(). "for" rides out the
+  # moment mid-update when the status already says selection_pending but the
+  # deadline sensor still holds the previous event's deadline.
+  - trigger: template
+    id: reminder
+    value_template: >-
+      {% set deadline = states(deadline_entity) | as_datetime(none) %}
+      {{ deadline is not none
+         and is_state(status_entity, 'selection_pending')
+         and now() < deadline <= now() + timedelta(**lead_time) }}
+    for:
+      seconds: 5
+
+actions:
+  # The status sensor is written first in each poll; the event, time and
+  # deadline sensors are written straight after it in the same update. Yield
+  # once so the message below reads the new values, not the previous poll's.
+  - delay:
+      seconds: 1
+  - variables:
+      notification_type: "{{ trigger.id }}"
+      event_name: >-
+        {{ states(event_entity) if has_value(event_entity) else 'Power Hour' }}
+      deadline_time: >-
+        {%- set d = states(deadline_entity) | as_datetime(none) -%}
+        {{ as_local(d).strftime('%a %-d %b %H:%M') if d is not none else '' }}
+      start_time: >-
+        {%- set d = states(start_entity) | as_datetime(none) -%}
+        {{ as_local(d).strftime('%a %-d %b %H:%M') if d is not none else '' }}
+      end_time: >-
+        {%- set d = states(end_entity) | as_datetime(none) -%}
+        {{ as_local(d).strftime('%a %-d %b %H:%M') if d is not none else '' }}
+      first_slot_time: >-
+        {%- set d = states(first_slot_entity) | as_datetime(none) -%}
+        {{ as_local(d).strftime('%a %-d %b %H:%M') if d is not none else '' }}
+      title: >-
+        {%- if notification_type == 'offer' -%} New Power Hour offer
+        {%- elif notification_type == 'reminder' -%} Book your Power Hour
+        {%- elif notification_type == 'start' -%} Power Hour started
+        {%- else -%} Power Hour ended
+        {%- endif -%}
+      message: >-
+        {%- if notification_type == 'offer' -%}
+          {{ event_name }} is open for booking.
+          {%- if start_time and end_time %} Slots run between {{ start_time }} and {{ end_time }}.{% endif %}
+          {%- if first_slot_time %} The earliest slot you can still book starts {{ first_slot_time }}.{% endif %}
+          {%- if deadline_time %} Choose a slot in the Aurora+ app by {{ deadline_time }}.{% endif %}
+        {%- elif notification_type == 'reminder' -%}
+          You haven't booked a slot for {{ event_name }} yet.
+          {%- if deadline_time %} Booking closes {{ deadline_time }}.{% endif %}
+          {%- if first_slot_time %} The earliest slot you can still book starts {{ first_slot_time }}.{% endif %}
+        {%- elif notification_type == 'start' -%}
+          {{ event_name }} has started
+          {%- if end_time %} and runs until {{ end_time }}{% endif %}.
+        {%- else -%}
+          Your Power Hour has ended.
+        {%- endif -%}
+  - sequence: !input notify_action

@@ -68,6 +68,7 @@ The `TariffPeriodSensor` and Aurora's T93 boundaries run on the **NEM clock = fi
 - `iot_class` is `cloud_polling` and `dependencies: ["recorder"]` is required for `async_add_external_statistics` to work.
 - The `Store` key (`{DOMAIN}_{entry.entry_id}_backfill`) holds `injected_dates` (saved sorted, for readability only), `today_base_sums`, and `today_base_date`. Wiping it forces a fresh backfill — README documents this for users when new statistics are added.
 - `strings.json` controls config-flow UI text; update it alongside any `config_flow.py` change that adds a new step or error key.
+- `blueprints/automation/aurora_energy/` holds the notification blueprints that the README's import buttons fetch from `main`. They hard-code the Power Hour Status values, the T93 period states and the default `sensor.aurora_energy_*` entity IDs, so change them in the same commit as any rename or state-value change. An automation triggered by one coordinator sensor starts before the other sensors from that update have been written. That is why the Power Hour blueprint delays 1 s before building its message and holds its reminder trigger `for` 5 s, and why the tariff blueprint waits for the period-end sensor.
 
 ## Keeping docs in sync
 

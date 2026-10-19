@@ -12,7 +12,7 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import UnitOfEnergy
+from homeassistant.const import EntityCategory, UnitOfEnergy
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -22,9 +22,11 @@ from homeassistant.util import dt as dt_util
 
 from .const import (
     DOMAIN,
+    SENSOR_ACTUAL_BALANCE,
     SENSOR_AMOUNT_OWED,
     SENSOR_AUTO_PAYMENT,
     SENSOR_AVG_DAILY_USAGE,
+    SENSOR_BALANCE_UPDATED,
     SENSOR_BILL_DUE,
     SENSOR_BILL_TOTAL,
     SENSOR_BP_COST,
@@ -34,6 +36,7 @@ from .const import (
     SENSOR_DAYS_REMAINING,
     SENSOR_DIRECT_DEBIT,
     SENSOR_ESTIMATED_BALANCE,
+    SENSOR_NEXT_BILL_DATE,
     SENSOR_OVERDUE_AMOUNT,
     SENSOR_PH_END,
     SENSOR_PH_EVENT_NAME,
@@ -78,6 +81,15 @@ SENSOR_DESCRIPTIONS: tuple[AuroraSensorEntityDescription, ...] = (
         key=SENSOR_ESTIMATED_BALANCE,
         name="Estimated Balance",
         data_key="estimated_balance",
+        native_unit_of_measurement="AUD",
+        device_class=SensorDeviceClass.MONETARY,
+        state_class=SensorStateClass.TOTAL,
+        icon="mdi:currency-usd",
+    ),
+    AuroraSensorEntityDescription(
+        key=SENSOR_ACTUAL_BALANCE,
+        name="Actual Balance",
+        data_key=SENSOR_ACTUAL_BALANCE,
         native_unit_of_measurement="AUD",
         device_class=SensorDeviceClass.MONETARY,
         state_class=SensorStateClass.TOTAL,
@@ -290,6 +302,26 @@ SENSOR_DESCRIPTIONS: tuple[AuroraSensorEntityDescription, ...] = (
         icon="mdi:bell-badge",
         entity_registry_enabled_default=False,
     ),
+    AuroraSensorEntityDescription(
+        key=SENSOR_NEXT_BILL_DATE,
+        name="Next Bill Date",
+        data_key=SENSOR_NEXT_BILL_DATE,
+        native_unit_of_measurement=None,
+        device_class=SensorDeviceClass.TIMESTAMP,
+        state_class=None,
+        icon="mdi:calendar-arrow-right",
+    ),
+    AuroraSensorEntityDescription(
+        key=SENSOR_BALANCE_UPDATED,
+        name="Balance Last Updated",
+        data_key=SENSOR_BALANCE_UPDATED,
+        native_unit_of_measurement=None,
+        device_class=SensorDeviceClass.TIMESTAMP,
+        state_class=None,
+        icon="mdi:update",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+    ),
     # --- Group B: billing period totals (/usage/billing-period) ---
     AuroraSensorEntityDescription(
         key=SENSOR_BP_KWH,
@@ -449,6 +481,22 @@ SENSOR_DESCRIPTIONS: tuple[AuroraSensorEntityDescription, ...] = (
 )
 
 
+def _device_info(entry: ConfigEntry, serial_number: Optional[str]) -> DeviceInfo:
+    """Device shared by every Aurora entity.
+
+    Keep the identifiers and name as they are: entity IDs are derived from the
+    device name, so changing it would rename new entities on existing installs.
+    """
+    return DeviceInfo(
+        identifiers={(DOMAIN, entry.entry_id)},
+        name="Aurora Energy",
+        manufacturer="Aurora Energy Tasmania",
+        model="Aurora+",
+        serial_number=serial_number,
+        entry_type=DeviceEntryType.SERVICE,
+    )
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -456,12 +504,15 @@ async def async_setup_entry(
 ) -> None:
     """Set up Aurora Energy sensors from a config entry."""
     coordinator: AuroraCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    # The first refresh has already run, so the client holds the active
+    # premise's service agreement ID; the config entry's copy can be stale.
+    serial_number = coordinator.client._service_agreement_id or None
     entities: list[SensorEntity] = [
-        AuroraSensor(coordinator, description, entry)
+        AuroraSensor(coordinator, description, entry, serial_number)
         for description in SENSOR_DESCRIPTIONS
     ]
-    entities.append(TariffPeriodSensor(entry))
-    entities.append(TariffPeriodEndSensor(entry))
+    entities.append(TariffPeriodSensor(entry, serial_number))
+    entities.append(TariffPeriodEndSensor(entry, serial_number))
     async_add_entities(entities)
 
 
@@ -476,17 +527,12 @@ class AuroraSensor(CoordinatorEntity[AuroraCoordinator], SensorEntity):
         coordinator: AuroraCoordinator,
         description: AuroraSensorEntityDescription,
         entry: ConfigEntry,
+        serial_number: Optional[str] = None,
     ) -> None:
         super().__init__(coordinator)
         self.entity_description = description
         self._attr_unique_id = f"{entry.entry_id}_{description.key}"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.entry_id)},
-            name="Aurora Energy",
-            manufacturer="Aurora Energy Tasmania",
-            model="Aurora+",
-            entry_type=DeviceEntryType.SERVICE,
-        )
+        self._attr_device_info = _device_info(entry, serial_number)
 
     @property
     def native_value(self) -> Optional[Any]:
@@ -551,16 +597,10 @@ class TariffPeriodSensor(SensorEntity):
     # Fixed AEST offset — UTC+10 with no DST adjustment, matching the NEM clock
     _AEST = datetime.timezone(datetime.timedelta(hours=10))
 
-    def __init__(self, entry: ConfigEntry) -> None:
+    def __init__(self, entry: ConfigEntry, serial_number: Optional[str] = None) -> None:
         self._entry = entry
         self._attr_unique_id = f"{entry.entry_id}_t93_tariff_period"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.entry_id)},
-            name="Aurora Energy",
-            manufacturer="Aurora Energy Tasmania",
-            model="Aurora+",
-            entry_type=DeviceEntryType.SERVICE,
-        )
+        self._attr_device_info = _device_info(entry, serial_number)
         self._unsub_listeners: list = []
 
     @property
@@ -632,17 +672,11 @@ class TariffPeriodEndSensor(SensorEntity):
 
     _AEST = datetime.timezone(datetime.timedelta(hours=10))
 
-    def __init__(self, entry: ConfigEntry) -> None:
+    def __init__(self, entry: ConfigEntry, serial_number: Optional[str] = None) -> None:
         self._entry = entry
         # Preserve the old unique_id so existing entity registrations survive the rename.
         self._attr_unique_id = f"{entry.entry_id}_tariff_period_end"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.entry_id)},
-            name="Aurora Energy",
-            manufacturer="Aurora Energy Tasmania",
-            model="Aurora+",
-            entry_type=DeviceEntryType.SERVICE,
-        )
+        self._attr_device_info = _device_info(entry, serial_number)
         self._unsub_listeners: list = []
 
     @property
