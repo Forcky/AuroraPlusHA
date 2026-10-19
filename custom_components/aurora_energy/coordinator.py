@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import datetime
 import logging
-import zoneinfo
 from typing import Any, Optional
 
 from homeassistant.components.recorder import get_instance
@@ -71,7 +70,6 @@ from .const import (
     TARIFF_T93OFFPEAK,
     TARIFF_T93PEAK,
     TARIFF_TOTAL,
-    TZ_HOBART,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -95,16 +93,18 @@ def _parse_date_field(dt_str: Optional[str]) -> Optional[datetime.datetime]:
         return None
 
 
-def _hobart_date(date_key: Optional[str]) -> Optional[datetime.date]:
+def _hobart_date(
+    date_key: Optional[str], tz: datetime.tzinfo
+) -> Optional[datetime.date]:
     """Hobart-local date of a usage StartDate (a UTC timestamp of local midnight)."""
     start_dt = dt_util.parse_datetime(date_key) if date_key else None
     if start_dt is None:
         return None
-    return dt_util.as_utc(start_dt).astimezone(zoneinfo.ZoneInfo(TZ_HOBART)).date()
+    return dt_util.as_utc(start_dt).astimezone(tz).date()
 
 
 def _parse_hobart_naive(
-    dt_str: Optional[str], tz: zoneinfo.ZoneInfo
+    dt_str: Optional[str], tz: datetime.tzinfo
 ) -> Optional[datetime.datetime]:
     """Parse a naive ISO datetime string as Australia/Hobart and return a UTC-aware datetime.
 
@@ -128,7 +128,7 @@ _PH_RANK_PENDING   = 2
 def _summarise_powerhour_event(
     event: dict[str, Any],
     now_utc: datetime.datetime,
-    tz: zoneinfo.ZoneInfo,
+    tz: datetime.tzinfo,
 ) -> Optional[dict[str, Any]]:
     """Reduce one Power Hour event to the fields the sensors need.
 
@@ -387,15 +387,21 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         hass: HomeAssistant,
         client: AuroraApiClient,
         entry: ConfigEntry,
+        tz: datetime.tzinfo,
     ) -> None:
         super().__init__(
             hass,
             _LOGGER,
+            config_entry=entry,
             name=DOMAIN,
             update_interval=None,
         )
         self.client = client
         self.entry = entry
+        # Australia/Hobart, resolved off the event loop by async_setup_entry.
+        # Use it instead of building a ZoneInfo anywhere in this module: the
+        # first construction reads tzdata from disk and blocks the loop.
+        self._tz = tz
         # Persistent store for tracking which dates have been injected into recorder
         self._store: Store = Store(
             hass, version=1, key=f"{DOMAIN}_{entry.entry_id}_backfill"
@@ -592,7 +598,6 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         data["start_date"] = usage.get("StartDate")
 
         # Power Hours
-        _tz = zoneinfo.ZoneInfo(TZ_HOBART)
         now_utc = dt_util.utcnow()
         # /powerhour/upcoming-active is ordered by announcement time, so its
         # first element can be a stale open offer that outranks an event the
@@ -601,7 +606,7 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         candidates = [
             summary
             for summary in (
-                _summarise_powerhour_event(e, now_utc, _tz)
+                _summarise_powerhour_event(e, now_utc, self._tz)
                 for e in powerhour_upcoming or []
             )
             if summary is not None
@@ -702,7 +707,7 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Hobart-local dates of every injected day."""
         dates = set()
         for key in self._injected_dates:
-            day = _hobart_date(key)
+            day = _hobart_date(key, self._tz)
             if day is not None:
                 dates.add(day)
         return dates
@@ -725,7 +730,7 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """
         y_key = yesterday_usage.get("StartDate")
         y_records = yesterday_usage.get("MeteredUsageRecords", [])
-        y_day = _hobart_date(y_key)
+        y_day = _hobart_date(y_key, self._tz)
         if not y_key or y_day is None:
             return
         y_ready = self._has_real_kwh_data(y_records) and self._is_day_complete(y_records)
@@ -787,8 +792,8 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         the in-memory sums are the authoritative value. This overrides a base
         already captured today: it was derived before yesterday was complete.
         """
-        today = dt_util.now(zoneinfo.ZoneInfo(TZ_HOBART)).date()
-        if _hobart_date(date_key) != today - datetime.timedelta(days=1):
+        today = dt_util.now(self._tz).date()
+        if _hobart_date(date_key, self._tz) != today - datetime.timedelta(days=1):
             return
         self._today_base_sums = dict(sums)
         self._today_base_date = today
@@ -1009,8 +1014,7 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         index=0 is undocumented — may return an error or yesterday's date.
         All failures are silent at DEBUG level so they don't disrupt the main update.
         """
-        _tz = zoneinfo.ZoneInfo(TZ_HOBART)
-        today = dt_util.now(_tz).date()
+        today = dt_util.now(self._tz).date()
         try:
             usage = await self.client.async_get_usage(timespan="day", index=0, nmi=nmi)
         except Exception as err:
@@ -1025,12 +1029,7 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # calendar day; in AEDT (UTC+11) it is 13:00 UTC. Comparing the raw
         # YYYY-MM-DD prefix to today's Hobart date therefore always fails
         # during Hobart daylight hours — convert to Hobart-local first.
-        start_dt = dt_util.parse_datetime(date_key) if date_key else None
-        returned_date = (
-            dt_util.as_utc(start_dt).astimezone(_tz).date()
-            if start_dt is not None
-            else None
-        )
+        returned_date = _hobart_date(date_key, self._tz)
         if returned_date != today:
             _LOGGER.debug(
                 "Aurora+: index=0 returned Hobart date %s, not today (%s), skipping",
@@ -1069,8 +1068,7 @@ class AuroraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         required for non-zero dollar values (Aurora returns hourly DollarValueUsage
         as null — see _distribute_day_dollars_by_kwh).
         """
-        _tz = zoneinfo.ZoneInfo(TZ_HOBART)
-        today = dt_util.now(_tz).date()
+        today = dt_util.now(self._tz).date()
 
         # Capture the base once per calendar day (persisted across restarts),
         # unless injecting yesterday already seeded it. It is the recorder's sum
