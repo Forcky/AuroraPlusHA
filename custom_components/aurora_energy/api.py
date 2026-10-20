@@ -34,7 +34,21 @@ class AuthenticationError(Exception):
 
 
 class TokenRefreshError(Exception):
-    """Raised when the refresh token is also expired — reauth required."""
+    """Raised when re-authentication is required.
+
+    Either Aurora rejected the refresh token (HTTP 401/403), or no token is
+    stored to get a new access token with.
+    """
+
+
+class AuroraApiError(Exception):
+    """Raised for an Aurora API failure that is not an authentication problem.
+
+    For example a network error, a timeout, a 5xx, a non-JSON body such as a
+    maintenance page, or a response without the expected token. None of these
+    says the stored tokens are bad, so callers should retry later rather than
+    ask the user to log in again.
+    """
 
 
 class AuroraApiClient:
@@ -92,43 +106,36 @@ class AuroraApiClient:
                     )
                 resp.raise_for_status()
                 data = await resp.json(content_type=None)
-
-            self._id_token = id_token
-            raw_token = (
-                data.get("accessToken")
-                or data.get("access_token")
-                or data.get("AccessToken")
-            )
-            self._access_token = (
-                raw_token.removeprefix("bearer ").removeprefix("Bearer ")
-                if raw_token
-                else None
-            )
-            self._refresh_token = (
-                data.get("refreshToken")
-                or data.get("refresh_token")
-                or data.get("RefreshToken")
-            )
-            self._refresh_cookie = self._extract_refresh_cookie(resp.cookies)
-
-            if not self._access_token:
-                raise AuthenticationError(
-                    "Login succeeded but no access_token found in response"
-                )
-
-            _LOGGER.debug("Aurora login successful, access_token obtained")
-            await self._persist_tokens()
+                refresh_cookie = self._extract_refresh_cookie(resp.cookies)
 
         except AuthenticationError:
             raise
         except aiohttp.ClientError as err:
             raise AuthenticationError(f"Network error during login: {err}") from err
 
+        access_token, refresh_token = self._parse_token_response(data)
+        if not access_token:
+            # Keep the current token state, as a failed refresh does.
+            raise AuthenticationError(
+                "Login succeeded but no access_token found in response"
+            )
+
+        self._id_token = id_token
+        self._access_token = access_token
+        self._refresh_token = refresh_token
+        self._refresh_cookie = refresh_cookie
+
+        _LOGGER.debug("Aurora login successful, access_token obtained")
+        await self._persist_tokens()
+
     async def async_refresh_token(self) -> None:
         """Refresh the access token using the refresh token / cookie.
 
         Protected by a lock so concurrent 401 responses only trigger one refresh.
-        Raises TokenRefreshError if the refresh token is also expired.
+        Raises TokenRefreshError only when Aurora rejects the refresh token
+        (HTTP 401/403), which needs a new login. Any other failure raises
+        AuroraApiError. Either way the token state is left untouched: it is
+        replaced and persisted only once a response carries an access token.
         """
         async with self._refresh_lock:
             url = BASE_URL + ENDPOINT_REFRESH
@@ -150,40 +157,38 @@ class AuroraApiClient:
                 ) as resp:
                     if resp.status in (401, 403):
                         raise TokenRefreshError(
-                            "Refresh token expired — re-authentication required"
+                            f"Refresh token rejected (HTTP {resp.status}) — "
+                            "re-authentication required"
                         )
                     resp.raise_for_status()
                     data = await resp.json(content_type=None)
-
-                raw_token = (
-                    data.get("accessToken")
-                    or data.get("access_token")
-                    or data.get("AccessToken")
-                )
-                self._access_token = (
-                    raw_token.removeprefix("bearer ").removeprefix("Bearer ")
-                    if raw_token
-                    else None
-                )
-                self._refresh_token = (
-                    data.get("refreshToken")
-                    or data.get("refresh_token")
-                    or data.get("RefreshToken")
-                    or self._refresh_token
-                )
-                new_cookie = self._extract_refresh_cookie(resp.cookies)
-                if new_cookie:
-                    self._refresh_cookie = new_cookie
-
-                _LOGGER.debug("Aurora token refresh successful")
-                await self._persist_tokens()
+                    new_cookie = self._extract_refresh_cookie(resp.cookies)
 
             except TokenRefreshError:
                 raise
-            except aiohttp.ClientError as err:
-                raise TokenRefreshError(
-                    f"Network error during token refresh: {err}"
+            except (aiohttp.ClientError, TimeoutError, ValueError) as err:
+                # A network error, a timeout (aiohttp's ServerTimeoutError or a
+                # bare TimeoutError), a 5xx, or a body that is not JSON, e.g. a
+                # maintenance page (ValueError). None of these says the refresh
+                # token is bad, so they must not start a re-auth flow.
+                detail = f": {err}" if str(err) else ""
+                raise AuroraApiError(
+                    f"Token refresh failed ({type(err).__name__}){detail}"
                 ) from err
+
+            access_token, refresh_token = self._parse_token_response(data)
+            if not access_token:
+                # Keep the stored tokens: persisting None here would leave the
+                # next poll with no access token at all.
+                raise AuroraApiError("Token refresh response had no access token")
+
+            self._access_token = access_token
+            self._refresh_token = refresh_token or self._refresh_token
+            if new_cookie:
+                self._refresh_cookie = new_cookie
+
+            _LOGGER.debug("Aurora token refresh successful")
+            await self._persist_tokens()
 
     async def async_validate_and_login(self, id_token: str) -> tuple[str, str]:
         """Validate an id_token and return (service_agreement_id, customer_id).
@@ -217,8 +222,6 @@ class AuroraApiClient:
 
     async def async_get_customer_data(self) -> dict[str, Any]:
         """GET /customers/current — billing and account info."""
-        if not self._access_token:
-            await self.async_login(self._id_token)
         url = BASE_URL + ENDPOINT_CUSTOMERS
         return await self._get_with_retry(url)
 
@@ -232,8 +235,6 @@ class AuroraApiClient:
             index: -1 = most recent, -9 = oldest available
             nmi: National Metering Identifier (unlocks per-interval data)
         """
-        if not self._access_token:
-            await self.async_login(self._id_token)
         url = BASE_URL + ENDPOINT_USAGE.format(timespan=timespan)
         params: dict[str, str] = {
             "serviceAgreementID": self._service_agreement_id,
@@ -246,8 +247,6 @@ class AuroraApiClient:
 
     async def async_get_powerhour_upcoming(self) -> list[dict[str, Any]]:
         """GET /powerhour/upcoming-active — current and upcoming Power Hour events."""
-        if not self._access_token:
-            await self.async_login(self._id_token)
         url = BASE_URL + ENDPOINT_POWERHOUR_UPCOMING
         result = await self._get_with_retry(url)
         if isinstance(result, list):
@@ -258,8 +257,6 @@ class AuroraApiClient:
         self, service_agreement_id: str, customer_id: str
     ) -> dict[str, Any]:
         """GET /usage/billing-period — totals for the entire current billing cycle."""
-        if not self._access_token:
-            await self.async_login(self._id_token)
         url = BASE_URL + ENDPOINT_USAGE_BILLING_PERIOD
         params = {
             "serviceAgreementID": service_agreement_id,
@@ -269,15 +266,11 @@ class AuroraApiClient:
 
     async def async_get_payment_status(self, account_number: str) -> dict[str, Any]:
         """GET /payment/activepayment/{accountNumber} — direct debit / auto-payment flags."""
-        if not self._access_token:
-            await self.async_login(self._id_token)
         url = BASE_URL + ENDPOINT_PAYMENT_ACTIVE.format(account_number=account_number)
         return await self._get_with_retry(url)
 
     async def async_get_powerhour_all(self) -> list[dict[str, Any]]:
         """GET /powerhour/all — all Power Hour events including historical (for savings)."""
-        if not self._access_token:
-            await self.async_login(self._id_token)
         url = BASE_URL + ENDPOINT_POWERHOUR_ALL
         result = await self._get_with_retry(url)
         if isinstance(result, list):
@@ -294,9 +287,11 @@ class AuroraApiClient:
         """GET with a single automatic token-refresh retry on 401.
 
         Requests are serialised: Aurora's API returns wrong data for
-        overlapping requests (see ``_request_lock``).
+        overlapping requests (see ``_request_lock``). Getting a missing access
+        token happens under the same lock, so its POST never overlaps a GET.
         """
         async with self._request_lock:
+            await self._ensure_access_token()
             for attempt in range(2):
                 async with self._session.get(
                     url,
@@ -323,6 +318,53 @@ class AuroraApiClient:
                     return await resp.json(content_type=None)
 
             raise RuntimeError("Unexpected state after retry loop")
+
+    async def _ensure_access_token(self) -> None:
+        """Get an access token before a request if none is held.
+
+        A runtime client normally restores one from the config entry. If it is
+        missing (1.0.16 and earlier could persist None after a bad refresh
+        response), renew it from the refresh token or cookie. Log in only with
+        a real id_token: none is stored since 1.0.1, and posting an empty one
+        can never succeed. With nothing to go on, ask the user to log in again.
+        """
+        if self._access_token:
+            return
+        if self._refresh_token or self._refresh_cookie:
+            await self.async_refresh_token()
+        elif self._id_token:
+            await self.async_login(self._id_token)
+        else:
+            raise TokenRefreshError(
+                "No Aurora+ tokens stored — re-authentication required"
+            )
+
+    @staticmethod
+    def _parse_token_response(data: Any) -> tuple[Optional[str], Optional[str]]:
+        """Return (access_token, refresh_token) from a LoginToken/refreshToken body.
+
+        The access token has its "bearer " prefix stripped. Either value is
+        None when absent; both are None when the body is not a JSON object
+        (an empty body, or a JSON array).
+        """
+        if not isinstance(data, dict):
+            return None, None
+        raw_token = (
+            data.get("accessToken")
+            or data.get("access_token")
+            or data.get("AccessToken")
+        )
+        access_token = (
+            raw_token.removeprefix("bearer ").removeprefix("Bearer ")
+            if isinstance(raw_token, str)
+            else None
+        )
+        refresh_token = (
+            data.get("refreshToken")
+            or data.get("refresh_token")
+            or data.get("RefreshToken")
+        )
+        return access_token or None, refresh_token
 
     def _extract_refresh_cookie(self, cookies: Any) -> Optional[str]:
         """Extract the RefreshToken cookie value from a response."""

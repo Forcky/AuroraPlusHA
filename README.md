@@ -74,8 +74,8 @@ If setup succeeds, a device called **Aurora Energy** will appear with all sensor
 | Average Daily Usage | Average daily spend | AUD |
 | Bill Total Amount | Most recent bill total | AUD |
 | Usage Days Remaining | Days remaining in billing period | d |
-| Daily Total Usage | Previous day's consumption | kWh |
-| Daily Total Cost | Previous day's energy cost | AUD |
+| Daily Total Usage | Previous day's consumption from the grid, all tariffs except solar export | kWh |
+| Daily Total Cost | Previous day's net cost as Aurora reports it: energy plus the daily supply charge, minus the solar feed-in credit | AUD |
 | Solar Feed-in | Previous day's solar export | kWh |
 | Solar Feed-in Earnings | Previous day's solar feed-in credit | AUD |
 | T93 Tariff Period | Current tariff period: `peak` or `off_peak` | — |
@@ -86,8 +86,8 @@ If setup succeeds, a device called **Aurora Energy** will appear with all sensor
 | Power Hour Selection Deadline | Deadline to select a timeslot | — |
 | Power Hour First Slot Start | Start of the earliest timeslot you can still book — book before this to get first pick | — |
 | Power Hour Total Savings | Lifetime savings from Power Hours events | AUD |
-| Billing Period Usage | Total kWh consumed in current billing cycle | kWh |
-| Billing Period Cost | Total cost in current billing cycle | AUD |
+| Billing Period Usage | kWh consumed from the grid in the current billing cycle, all tariffs except solar export | kWh |
+| Billing Period Cost | Net cost of the current billing cycle as Aurora reports it, including supply charges and the solar credit | AUD |
 | Billing Period Solar Feed-in | Total solar exported in current billing cycle | kWh |
 | Billing Period Solar Earnings | Total solar feed-in credit in current billing cycle | AUD |
 | Bill Due Date | Date the current bill is due | — |
@@ -193,6 +193,8 @@ On first login the integration exchanges your credentials for a longer-lived tok
 
 If your session fully expires (HA will show a notification), click through the re-authentication flow — the same login link approach as initial setup. Once re-authentication succeeds the new tokens are immediately saved and the integration reloads.
 
+Only one thing counts as an expired session: Aurora rejecting the refresh token (HTTP 401/403). From 1.0.17, any other problem while refreshing leaves your saved login untouched, including a network drop, a timeout, or Aurora being down or showing a maintenance page. The Aurora sensors go unavailable and the integration tries again at the next hourly poll. If it happens while Home Assistant is starting, the integration shows as retrying setup, and Home Assistant keeps retrying on its own. Either way it recovers without you doing anything once Aurora is reachable again.
+
 You must re-authenticate with the **same Aurora+ account** the integration was originally set up with — logging in with a different account is rejected (this prevents another account's data being mixed into your existing sensors and Energy Dashboard statistics). To switch accounts, remove the integration and add it again.
 
 The account is matched on your Aurora+ `CustomerID`. If you move premises or re-contract, your `ServiceAgreementID` changes but your `CustomerID` does not, so re-authentication still succeeds and the new `ServiceAgreementID` is saved automatically. (Versions 1.0.7–1.0.8 matched on `ServiceAgreementID` and could reject the correct account — see [Troubleshooting](#troubleshooting).)
@@ -244,6 +246,14 @@ The login was rejected by Aurora+. Try again with a fresh login link (reload the
 
 Fixed in 1.0.10. Upgrade, then re-authenticate once to seed a fresh token chain. See [Re-authentication](#re-authentication) for the detail.
 
+### Asked to re-authenticate after an internet outage or Aurora maintenance
+
+Fixed in 1.0.17. Earlier versions treated almost any failed token refresh as an expired login: a network drop, a timeout, or an error page from Aurora during an outage. Home Assistant then asked you to re-authenticate even though your login was still valid. If it happened while Home Assistant was starting, the integration failed to load and stayed down until you re-authenticated. If Aurora answered a refresh with no new token, an earlier version could also save an empty access token. The integration then failed every poll without ever asking you to log in again.
+
+From 1.0.17 only a rejected refresh token (HTTP 401/403) asks you to log in again, and a failed refresh never changes your saved login. Anything else is retried at the next hourly poll; see [Re-authentication](#re-authentication). If 1.0.17 asks you to re-authenticate, your session really has expired.
+
+If an earlier version saved an empty access token, 1.0.17 repairs it on the first poll after updating: it gets a new access token with your saved refresh token, without asking you to log in. If that refresh token has also expired, Home Assistant asks you to re-authenticate instead of failing silently.
+
 ### Re-authentication prompt reappears immediately after submitting a new token
 Ensure you are running the latest version of this integration. Earlier versions had a bug where the new tokens were not saved after re-auth, causing the integration to immediately fail again with the old expired credentials on reload.
 
@@ -270,6 +280,10 @@ This was a bug in 1.0.12 and earlier ([#17](https://github.com/Forcky/AuroraPlus
 
 ### Power Hour sensors show "Unknown"
 Power Hour sensors show `Unknown` when no Power Hours event is currently active or upcoming — this is normal. The **Power Hour Status** sensor will show `no_event` once the coordinator has fetched successfully at least once. If it remains `Unknown` after the first hourly refresh, check **Settings → System → Logs** and filter by `aurora_energy` for warnings.
+
+### Daily Total Usage or Billing Period Usage dropped after updating to 1.0.17 (solar accounts)
+
+Fixed in 1.0.17. Aurora's own kWh total also counts the energy you exported to the grid. Earlier versions showed that total, so on a solar account **Daily Total Usage** and **Billing Period Usage** were too high by your solar export. They now add up the consumption tariffs only, so they drop by the export amount. Values recorded before the update are not rewritten, and each sensor's own history may show one downward step at the update. The Energy Dashboard is not affected: it uses `aurora_energy:total_kwh`, which has never included export.
 
 ### Daily Total Usage shows 0.000 kWh
 - This is expected before ~8–9am AEST — Aurora has not yet released that day's data.
