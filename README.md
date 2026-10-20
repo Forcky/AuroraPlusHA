@@ -27,17 +27,24 @@ A custom Home Assistant integration that pulls your Aurora Energy Tasmania billi
 
 ### Option 1 — HACS (Recommended)
 
-1. In Home Assistant, open **HACS**
-2. Click the three-dot menu (⋮) → **Custom repositories**
-3. Add `https://github.com/Forcky/AuroraPlusHA` with category **Integration**
-4. Click **Add**
-5. Search for **Aurora Energy Tasmania** in HACS and click **Download**
-6. Restart Home Assistant
-7. Go to **Settings → Devices & Services → Add Integration**
-8. Search for **Aurora Energy Tasmania**
-9. Click the **Log in to Aurora+** link that appears, log in (tick **Keep me logged in**), then copy the full URL from your browser's address bar and paste it into Home Assistant
+The integration is in the HACS default store, so there is nothing to add first.
+
+[![Open your Home Assistant instance and open this repository in HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Forcky&repository=AuroraPlusHA&category=integration)
+
+1. In Home Assistant, open **HACS**, or use the button above
+2. Search for **Aurora Energy Tasmania** and click **Download**
+3. Restart Home Assistant
+4. Go to **Settings → Devices & Services → Add Integration**
+5. Search for **Aurora Energy Tasmania**
+6. Click the **Log in to Aurora+** link that appears, log in (tick **Keep me logged in**), then copy the full URL from your browser's address bar and paste it into Home Assistant
 
 HACS will notify you of future updates so you can update with a single click.
+
+**If the search doesn't find it,** add the repository to HACS yourself, then continue from step 2:
+
+1. In HACS, click the three-dot menu (⋮) → **Custom repositories**
+2. Add `https://github.com/Forcky/AuroraPlusHA` with category **Integration**
+3. Click **Add**
 
 ---
 
