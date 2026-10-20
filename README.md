@@ -4,14 +4,15 @@ A custom Home Assistant integration that pulls your Aurora Energy Tasmania billi
 
 ## What it does
 
-- Estimated balance, amount owed, unbilled amount
+- Estimated and actual balance, amount owed, unbilled amount, next bill date
 - Daily energy usage (kWh) and cost
 - Solar feed-in (kWh exported and earnings)
 - Real-time T93 tariff period sensor (`peak` / `off_peak`), DST-correct
 - Power Hours demand-response program sensors (status, timeslot, savings)
 - Billing period totals (cumulative kWh and cost for the current billing cycle)
-- Historical statistics for the Energy Dashboard (backfills up to 7 days on every HA restart to cover gaps; today's partial hourly data updated each poll)
+- Historical statistics for the Energy Dashboard (backfills up to 7 days on every HA restart to cover gaps; today's partial hourly data updated each poll), per tariff for every tariff on your account
 - Polling aligned to the clock hour — sensors update within seconds of Aurora+ events rather than up to 59 minutes late
+- [Notification blueprints](#notification-blueprints) for Power Hours and T93 peak/off-peak changes
 
 ---
 
@@ -26,17 +27,24 @@ A custom Home Assistant integration that pulls your Aurora Energy Tasmania billi
 
 ### Option 1 — HACS (Recommended)
 
-1. In Home Assistant, open **HACS**
-2. Click the three-dot menu (⋮) → **Custom repositories**
-3. Add `https://github.com/Forcky/AuroraPlusHA` with category **Integration**
-4. Click **Add**
-5. Search for **Aurora Energy Tasmania** in HACS and click **Download**
-6. Restart Home Assistant
-7. Go to **Settings → Devices & Services → Add Integration**
-8. Search for **Aurora Energy Tasmania**
-9. Click the **Log in to Aurora+** link that appears, log in (tick **Keep me logged in**), then copy the full URL from your browser's address bar and paste it into Home Assistant
+The integration is in the HACS default store, so there is nothing to add first.
+
+[![Open your Home Assistant instance and open this repository in HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Forcky&repository=AuroraPlusHA&category=integration)
+
+1. In Home Assistant, open **HACS**, or use the button above
+2. Search for **Aurora Energy Tasmania** and click **Download**
+3. Restart Home Assistant
+4. Go to **Settings → Devices & Services → Add Integration**
+5. Search for **Aurora Energy Tasmania**
+6. Click the **Log in to Aurora+** link that appears, log in (tick **Keep me logged in**), then copy the full URL from your browser's address bar and paste it into Home Assistant
 
 HACS will notify you of future updates so you can update with a single click.
+
+**If the search doesn't find it,** add the repository to HACS yourself, then continue from step 2:
+
+1. In HACS, click the three-dot menu (⋮) → **Custom repositories**
+2. Add `https://github.com/Forcky/AuroraPlusHA` with category **Integration**
+3. Click **Add**
 
 ---
 
@@ -60,7 +68,7 @@ HACS will notify you of future updates so you can update with a single click.
 4. Search for **Aurora Energy Tasmania**
 5. Click the **Log in to Aurora+** link, log in (tick **Keep me logged in**), copy the full URL from your browser's address bar, and paste it into Home Assistant
 
-If setup succeeds, a device called **Aurora Energy** will appear with all sensors populated.
+If setup succeeds, a device called **Aurora Energy** will appear with all sensors populated. Its serial number is the service agreement ID of your active Aurora+ premise.
 
 ---
 
@@ -69,6 +77,7 @@ If setup succeeds, a device called **Aurora Energy** will appear with all sensor
 | Sensor | Description | Unit |
 |--------|-------------|------|
 | Estimated Balance | Current account balance | AUD |
+| Actual Balance | Account balance as at Aurora's last daily update (see **Balance Last Updated**). **Estimated Balance** is the figure the Aurora+ app shows as *Balance* | AUD |
 | Amount Owed | Outstanding amount due | AUD |
 | Unbilled Amount | Charges not yet on a bill | AUD |
 | Average Daily Usage | Average daily spend | AUD |
@@ -91,6 +100,7 @@ If setup succeeds, a device called **Aurora Energy** will appear with all sensor
 | Billing Period Solar Feed-in | Total solar exported in current billing cycle | kWh |
 | Billing Period Solar Earnings | Total solar feed-in credit in current billing cycle | AUD |
 | Bill Due Date | Date the current bill is due | — |
+| Next Bill Date | When Aurora+ next issues a bill | — |
 | Overdue Amount | Amount currently overdue | AUD |
 | Unpaid Bills | Count of unpaid bills | — |
 
@@ -127,6 +137,44 @@ The following sensors exist but are disabled by default. Enable them via **Setti
 | Unread Notifications | Number of unread Aurora+ notifications | All accounts |
 | Direct Debit | Whether a direct debit arrangement is active (`active`/`inactive`) | All accounts |
 | Auto Payment | Whether auto-payment (card) is configured (`active`/`inactive`) | All accounts |
+| Balance Last Updated | When Aurora+ last updated **Actual Balance** (diagnostic) | All accounts |
+
+---
+
+## Notification blueprints
+
+Two automation blueprints turn the sensors above into notifications. Click a button to import one into Home Assistant (or go to **Settings → Automations & scenes → Blueprints → Import blueprint** and paste the file's URL), then create an automation from it.
+
+### Power Hour notifications
+
+[![Open your Home Assistant instance and show the blueprint import dialog with a specific blueprint pre-filled.](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FForcky%2FAuroraPlusHA%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Faurora_energy%2Fpower_hour.yaml)
+
+Notifies you when:
+
+- Aurora+ offers a new Power Hour (**Power Hour Status** changes to `selection_pending`)
+- the selection deadline is within your chosen lead time (default 1 day) and you still haven't booked a slot
+- your Power Hour starts (`active`), and when it ends
+
+You pick the **Power Hour Status** and **Power Hour Selection Deadline** sensors, the reminder lead time and the notification action. Messages include the event name, the offered slots, the earliest slot you can still book and the deadline, read from the other Power Hour sensors. Those are in a collapsed *Sensors used in messages* section, pre-filled with the integration's entity IDs; change them only if you renamed the entities. Status changes arrive with the hourly poll, so start and end notifications come within seconds of the hour. A status that drops to `unavailable` for a failed poll or a restart doesn't trigger anything.
+
+### T93 tariff period notifications
+
+[![Open your Home Assistant instance and show the blueprint import dialog with a specific blueprint pre-filled.](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FForcky%2FAuroraPlusHA%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Faurora_energy%2Ftariff_period.yaml)
+
+Notifies you when the **T93 Tariff Period** sensor switches between `peak` and `off_peak` (both by default, or just one). If you enable the **T93 Tariff Period End** sensor (disabled by default), the message also says when the new period ends, for example *Off-peak pricing has started and runs until 08:00 tomorrow.* Times are local, so during daylight saving they are an hour later than the AEST schedule in [Tariff notes](#t93-peakoff-peak-schedule).
+
+### Notification action
+
+Both blueprints default to a notification in Home Assistant itself. Each new notification replaces the previous one from the same blueprint. To send them to your phone instead, replace the action with, for example:
+
+```yaml
+- action: notify.mobile_app_your_phone
+  data:
+    title: "{{ title }}"
+    message: "{{ message }}"
+```
+
+The blueprints also provide `notification_type` (Power Hour: `offer`, `reminder`, `start` or `end`) and `period` (tariff: `peak` or `off_peak`) if you want to handle them differently.
 
 ---
 
@@ -162,10 +210,24 @@ The following additional statistics are available for use in custom dashboard ca
 | `aurora_energy:t93peak_dollars` | T93 peak tariff cost |
 | `aurora_energy:t93offpeak_dollars` | T93 off-peak tariff cost |
 | `aurora_energy:solar_feedin_dollars` | Solar feed-in earnings |
+| `aurora_energy:<tariff>_kwh` | Consumption on any other tariff on your account, e.g. `aurora_energy:t62_kwh` (see below) |
+| `aurora_energy:<tariff>_dollars` | That tariff's cost, e.g. `aurora_energy:t62_dollars` |
 
 Aurora's API only exposes dollar values at the day level, so per-hour cost statistics are produced by distributing each tariff's day total across hours weighted by that hour's share of the day's kWh for the same tariff.
 
-> **Note for existing installs:** The per-tariff `*_dollars` statistics (`t31_dollars`, `t41_dollars`, `t93peak_dollars`, `t93offpeak_dollars`) and the corrected `total_dollars` / `solar_feedin_dollars` distribution were introduced in recent updates. Existing installs will not automatically backfill or correct these because the backfill guard sees previously injected dates as already processed. To trigger a fresh backfill, delete `.storage/aurora_energy_<entry_id>_backfill` from your HA config directory and restart Home Assistant.
+**Other tariffs.** Any tariff Aurora meters for your account that has no statistic of its own above (for example a business, irrigation or newer residential tariff) gets a pair of statistics automatically:
+
+- **IDs:** `aurora_energy:<tariff>_kwh` and `aurora_energy:<tariff>_dollars`. `<tariff>` is Aurora's tariff code in lowercase, with anything other than letters and digits replaced by `_`. So `T62` becomes `aurora_energy:t62_kwh`, and `BUS-LV 2` becomes `aurora_energy:bus_lv_2_kwh`.
+- **Names:** `Aurora <TARIFF> Energy` and `Aurora <TARIFF> Cost`, e.g. **Aurora T62 Energy**.
+- **When they're recorded:** on every day Aurora's hourly data includes the tariff. If the tariff leaves your account (a plan change, say), its statistics stop and their history stays. If it comes back, its running total carries on from where it stopped.
+- **What's not included:** the daily supply charge (`Other` in Aurora's data) is dollars-only and gets no statistic of its own.
+- **Totals:** `aurora_energy:total_kwh` and `aurora_energy:total_dollars` already include these tariffs, as they always have.
+
+To use one in the Energy Dashboard, go to **Settings → Dashboards → Energy**. Under **Electricity grid**, add a grid consumption source and pick **Aurora T62 Energy** (or search `aurora_energy`). To track its cost, choose **Use an entity tracking the total costs** and pick **Aurora T62 Cost**. Use either `aurora_energy:total_kwh` or the per-tariff statistics as grid consumption, not both: the total already includes every tariff, so adding both counts that energy twice. **Developer tools → Statistics** lists every `aurora_energy` statistic your install has.
+
+> **Note for existing installs (1.1.0):** Statistics for other tariffs are new in 1.1.0. Update, then **restart Home Assistant**. The startup check re-injects the last 7 days, so the new statistics are backfilled for those 7 days automatically. You don't need to delete anything from `.storage`. Days older than that can't be recovered. If yesterday isn't fully delivered by Aurora at the time of the restart, it is filled in by the regular poll once it is. Statistics for T31, T41, T93 and solar are unchanged.
+
+> **Note for existing installs:** The per-tariff `*_dollars` statistics (`t31_dollars`, `t41_dollars`, `t93peak_dollars`, `t93offpeak_dollars`) and the corrected `total_dollars` / `solar_feedin_dollars` distribution were introduced in earlier updates. Every restart re-injects the last 7 days, which brings those days up to date. Days older than that keep whatever an older version recorded.
 
 > **HA 2026.11 compatibility:** This integration uses the updated `StatisticMeanType` API required by Home Assistant Core 2026.11. Update to the latest version of this integration before upgrading to HA 2026.11 or later.
 
@@ -213,8 +275,9 @@ This integration supports multiple Aurora tariff structures:
 | **T31** | Flat rate general power |
 | **T41** | Flat rate controlled load (heating) |
 | **T140** | Solar feed-in / export (detected automatically) |
+| **Any other tariff** | Energy Dashboard statistics only, generated from the tariff code (see [Energy Dashboard](#energy-dashboard)) |
 
-The integration automatically detects which tariffs are active on your account. T31/T41 and T93 breakdown sensors are disabled by default — enable only what's relevant to your account.
+The integration automatically detects which tariffs are active on your account. T31/T41 and T93 breakdown sensors are disabled by default — enable only what's relevant to your account. Other tariffs have no sensors, but their consumption is included in **Daily Total Usage**.
 
 ### T93 peak/off-peak schedule
 
@@ -275,6 +338,7 @@ This was a bug in 1.0.12 and earlier ([#17](https://github.com/Forcky/AuroraPlus
 
 ### Sensors show "Unknown"
 - **Estimated Balance** and **Usage Days Remaining** may be `null` for some account types — this is normal behaviour and not an error.
+- **Actual Balance**, **Next Bill Date** and **Balance Last Updated** show `Unknown` if Aurora+ doesn't send that field for your account.
 - **Usage sensors** only update once per day when Aurora releases meter data (typically 8–9am AEST). They will show `Unknown` or yesterday's value until then.
 - **T93 Peak Usage** reports **0 kWh** for weekend days — there is no peak window on Saturday or Sunday, so zero is the correct value. **T93 Peak Cost** still shows `Unknown` on those days because Aurora omits the dollar figure entirely from its response.
 

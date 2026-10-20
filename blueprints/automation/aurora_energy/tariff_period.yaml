@@ -1,0 +1,108 @@
+blueprint:
+  name: Aurora Energy — T93 tariff period notifications
+  description: >-
+    Sends a notification when the T93 time-of-use tariff switches between peak
+    and off-peak. If the integration's **T93 Tariff Period End** sensor is
+    enabled (it is disabled by default), the message also says when the new
+    period ends. Needs the Aurora Energy Tasmania (Aurora+) integration.
+
+
+    Your notification action can use `{{ title }}` and `{{ message }}`, and
+    `{{ period }}` (`peak` or `off_peak`) if you want to handle the two
+    differently.
+  domain: automation
+  source_url: https://github.com/Forcky/AuroraPlusHA/blob/main/blueprints/automation/aurora_energy/tariff_period.yaml
+  homeassistant:
+    min_version: 2025.11.0
+  input:
+    period_sensor:
+      name: T93 Tariff Period sensor
+      description: The integration's **T93 Tariff Period** sensor.
+      selector:
+        entity:
+          filter:
+            - integration: aurora_energy
+              domain: sensor
+    period_end_sensor:
+      name: T93 Tariff Period End sensor
+      description: >-
+        Used for the "until …" part of the message. The integration creates
+        this sensor disabled; enable it on the Aurora Energy device to get the
+        end time. While it is disabled the message leaves the end time out.
+      default: sensor.aurora_energy_t93_tariff_period_end
+      selector:
+        entity:
+          filter:
+            - integration: aurora_energy
+              domain: sensor
+              device_class: timestamp
+    notify_on:
+      name: Notify when
+      default:
+        - peak
+        - off_peak
+      selector:
+        select:
+          multiple: true
+          options:
+            - label: Peak starts
+              value: peak
+            - label: Off-peak starts
+              value: off_peak
+    notify_action:
+      name: Notification action
+      description: >-
+        What to run for each notification. Use `{{ title }}` and
+        `{{ message }}` in it, for example in a `notify.mobile_app_…` action.
+        The default creates a notification in Home Assistant.
+      default:
+        - action: persistent_notification.create
+          data:
+            notification_id: aurora_energy_tariff_period
+            title: "{{ title }}"
+            message: "{{ message }}"
+      selector:
+        action: {}
+
+mode: queued
+max: 5
+
+variables:
+  end_entity: !input period_end_sensor
+
+triggers:
+  # Only real peak/off-peak switches: the sensor coming back from
+  # unavailable after a restart or reload is not a tariff change.
+  - trigger: state
+    entity_id: !input period_sensor
+    from:
+      - peak
+      - off_peak
+    to: !input notify_on
+
+actions:
+  # The period and period-end sensors update on separate timers at the same
+  # boundary, so the end sensor can still hold the boundary that just passed.
+  # Wait (briefly) for it to move on. An end sensor that is disabled or
+  # unavailable passes straight through.
+  - wait_template: >-
+      {% set end = states(end_entity) | as_datetime(none) %}
+      {{ end is none or end > now() }}
+    timeout:
+      seconds: 5
+    continue_on_timeout: true
+  - variables:
+      period: "{{ trigger.to_state.state }}"
+      until: >-
+        {%- set end = states(end_entity) | as_datetime(none) -%}
+        {%- if end is not none and end > now() -%}
+          {%- set local_end = as_local(end) -%}
+          {%- set days = (local_end.date() - now().date()).days -%}
+          {{ local_end.strftime('%H:%M') }}
+          {%- if days == 1 %} tomorrow{% elif days > 1 %} on {{ local_end.strftime('%A') }}{% endif %}
+        {%- endif -%}
+      title: "{{ 'Peak' if period == 'peak' else 'Off-peak' }} tariff period"
+      message: >-
+        {{ 'Peak' if period == 'peak' else 'Off-peak' }} pricing has started
+        {%- if until %} and runs until {{ until }}{% endif %}.
+  - sequence: !input notify_action
